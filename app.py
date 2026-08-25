@@ -56,7 +56,7 @@ def debug_log():
 # ----------------------------------------------------------------------------
 def get_db():
     conn = sqlite3.connect(DB, timeout=30)
-    conn.row_factory = lambda cursor, row: dict(zip([col[0] for col in cursor.description], row))
+    conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=30000")
     return conn
@@ -157,7 +157,7 @@ def admin_required(f):
         u = get_current_user()
         if not u:
             return jsonify({"error": "未登录"}), 401
-        if u.get("role") != "admin":
+        if u["role"] != "admin":
             return jsonify({"error": "需要管理员权限"}), 403
         return f(*a, **k)
     return wrapped
@@ -493,9 +493,9 @@ def api_login():
     conn.close()
     if not r or not check_password_hash(r["password_hash"], password):
         return jsonify({"error": "用户名或密码错误"}), 401
-    if r.get("status") == "pending":
+    if r["status"] == "pending":
         return jsonify({"error": "账号待管理员审核，请等待审核通过后再登录"}), 403
-    if r.get("status") == "rejected":
+    if r["status"] == "rejected":
         return jsonify({"error": "账号审核未通过，请联系管理员"}), 403
     session["user_id"] = r["id"]
     return jsonify({"ok": True, "user": {"username": r["username"], "role": r["role"]}})
