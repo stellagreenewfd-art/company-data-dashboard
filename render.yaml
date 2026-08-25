@@ -17,7 +17,7 @@ services:
         value: "1"
       # PORT 由 Render 自动注入，无需设置
     # 持久盘：数据库文件放在 /data，重启/部署不丢失
-    disks:
-      - name: data
-        mountPath: /data
-        sizeGB: 1
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
