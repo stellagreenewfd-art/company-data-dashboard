@@ -28,6 +28,14 @@ app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SECURE_COOKIES", "0") == "
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", 5000))
 
+# 全局 500 捕获：API 请求返回 JSON 错误，方便云端调试
+import traceback
+@app.errorhandler(500)
+def handle_500(e):
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "服务器内部错误", "detail": str(e), "traceback": traceback.format_exc()}), 500
+    return str(e), 500
+
 # ----------------------------------------------------------------------------
 # DB
 # ----------------------------------------------------------------------------
