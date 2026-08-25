@@ -1,0 +1,23 @@
+# Render 部署配置：10 人异地共用同一数据库
+# 部署方式：在 Render 新建 "Blueprint" 并连接本仓库（或手动建 Web Service + Disk）
+services:
+  - type: web
+    name: company-data-dashboard
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 2 -b 0.0.0.0:$PORT app:app
+    healthCheckPath: /api/me
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DB_PATH
+        value: /data/company.db
+      - key: SECURE_COOKIES
+        value: "1"
+      # PORT 由 Render 自动注入，无需设置
+    # 持久盘：数据库文件放在 /data，重启/部署不丢失
+    disks:
+      - name: data
+        mountPath: /data
+        sizeGB: 1

@@ -1,0 +1,17 @@
+# 数据库与上传临时文件（含真实业务数据，不入库）
+data/*.db
+data/tmp_*
+*.db
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.env
+
+# 项目元数据
+.workbuddy/
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db

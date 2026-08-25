@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>公司多平台经营数据看板</title>
+<script src="/static/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#f5f7fa; --card:#ffffff; --ink:#1f2d3d; --sub:#6b7785; --line:#e6eaf0;
+    --brand:#2f6bff; --brand2:#13c2c2; --red:#e34d59; --green:#21a366; --amber:#f5a623;
+    --shadow:0 1px 3px rgba(20,40,80,.08),0 6px 20px rgba(20,40,80,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"PingFang SC","Microsoft YaHei",Segoe UI,Roboto,sans-serif;
+       background:var(--bg);color:var(--ink);font-size:14px}
+  header{background:linear-gradient(120deg,#2f6bff,#13c2c2);color:#fff;padding:18px 26px;
+         display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap}
+  header h1{margin:0;font-size:20px;font-weight:700;letter-spacing:.5px}
+  header .meta{font-size:12px;opacity:.9}
+  .wrap{max-width:1320px;margin:0 auto;padding:18px}
+  .grid{display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+        box-shadow:var(--shadow);padding:16px 18px}
+  .card h3{margin:0 0 12px;font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .card h3 .dot{width:8px;height:8px;border-radius:50%;background:var(--brand)}
+  .row{display:flex;gap:16px;flex-wrap:wrap}
+  .row>*{flex:1;min-width:260px}
+  label{font-size:12px;color:var(--sub);display:block;margin:8px 0 4px}
+  select,input[type=text],input[type=date],input[type=file]{
+    width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:#fff;
+    font-size:13px;color:var(--ink)}
+  button{cursor:pointer;border:none;border-radius:9px;padding:9px 16px;font-size:13px;font-weight:600;
+         background:var(--brand);color:#fff;transition:.15s}
+  button:hover{filter:brightness(1.05)}
+  button.ghost{background:#eef3ff;color:var(--brand)}
+  button.danger{background:#fdecee;color:var(--red)}
+  button.sm{padding:5px 10px;font-size:12px}
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
+  @media(max-width:980px){.kpis{grid-template-columns:repeat(2,1fr)}}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow)}
+  .kpi .t{font-size:12px;color:var(--sub);margin-bottom:6px}
+  .kpi .v{font-size:22px;font-weight:800;letter-spacing:.3px}
+  .kpi .v small{font-size:13px;font-weight:600;color:var(--sub)}
+  .kpi.red .v{color:var(--red)} .kpi.green .v{color:var(--green)} .kpi.brand .v{color:var(--brand)}
+  .kpi.amber .v{color:var(--amber)}
+  .charts{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:980px){.charts{grid-template-columns:1fr}}
+  .chart-box{height:300px;position:relative}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--sub);font-weight:600;background:#fafbfc;position:sticky;top:0}
+  .tbl-scroll{max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+  .pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600;
+        background:#eef3ff;color:var(--brand)}
+  .pill.g{background:#e7f7ef;color:var(--green)} .pill.a{background:#fff3e0;color:var(--amber)}
+  .pill.r{background:#fdecee;color:var(--red)}
+  .msg{margin-top:10px;font-size:13px;padding:8px 10px;border-radius:8px;display:none}
+  .msg.ok{display:block;background:#e7f7ef;color:var(--green)}
+  .msg.err{display:block;background:#fdecee;color:var(--red)}
+  .checks{display:flex;flex-wrap:wrap;gap:10px}
+  .checks label{display:flex;align-items:center;gap:5px;margin:0;font-size:13px;color:var(--ink);cursor:pointer}
+  .checks input{width:auto}
+  .hint{font-size:12px;color:var(--sub);margin-top:6px;line-height:1.5}
+  .flex-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
+  .tag{font-size:11px;color:var(--sub);background:#f0f3f7;padding:3px 8px;border-radius:6px}
+</style>
+</head>
+<body>
+<!-- 登录遮罩 -->
+<div id="loginOverlay" style="position:fixed;inset:0;z-index:999;background:linear-gradient(120deg,#2f6bff,#13c2c2);
+     display:flex;align-items:center;justify-content:center;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <div style="background:#fff;border-radius:16px;padding:30px 34px;width:340px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <h2 style="margin:0 0 4px;font-size:20px;color:#1f2d3d">📊 数据管理系统</h2>
+    <p style="margin:0 0 18px;font-size:12px;color:#6b7785">请登录后上传与查看公司数据</p>
+    <label style="font-size:12px;color:#6b7785;display:block;margin-bottom:4px">用户名</label>
+    <input id="lgUser" type="text" autocomplete="username" placeholder="如 admin"
+           style="width:100%;padding:9px 11px;border:1px solid #e6eaf0;border-radius:9px;font-size:14px;margin-bottom:12px">
+    <label style="font-size:12px;color:#6b7785;display:block;margin-bottom:4px">密码</label>
+    <input id="lgPass" type="password" autocomplete="current-password" placeholder="请输入密码"
+           style="width:100%;padding:9px 11px;border:1px solid #e6eaf0;border-radius:9px;font-size:14px;margin-bottom:16px"
+           onkeydown="if(event.key==='Enter')doLogin()">
+    <button onclick="doLogin()" style="width:100%;padding:11px;background:#2f6bff;color:#fff;border:none;border-radius:9px;font-size:14px;font-weight:700">登录</button>
+    <div id="lgMsg" style="margin-top:12px;font-size:12px;display:none"></div>
+  </div>
+</div>
+
+<header>
+  <h1>📊 公司多平台经营数据看板</h1>
+  <div class="meta" id="hdrMeta">
+    <span id="userBox" style="display:none"></span>
+    <span id="guestBox">数据管理系统 · 历史累积 · 长期趋势分析</span>
+  </div>
+</header>
+
+<div class="wrap grid" id="appWrap" style="display:none">
+
+  <!-- 上传 -->
+  <div class="card">
+    <h3><span class="dot"></span>① 上传平台数据（每天分平台导入）</h3>
+    <div class="row">
+      <div>
+        <label>平台（可直接输入）</label>
+        <input id="upPlatform" list="lstPlatform" placeholder="如 拼多多 / 抖音 / 天猫" autocomplete="off">
+        <datalist id="lstPlatform"></datalist>
+      </div>
+      <div>
+        <label>品类（可直接输入）</label>
+        <input id="upCategory" list="lstCategory" placeholder="如 鸡蛋 / 奶粉 / 食品" autocomplete="off">
+        <datalist id="lstCategory"></datalist>
+      </div>
+      <div>
+        <label>数据类型（默认自动识别）</label>
+        <select id="upType">
+          <option value="">自动识别</option>
+          <option value="sales">销售订单明细</option>
+          <option value="promo_daily">推广分天数据</option>
+          <option value="promo_product">推广商品汇总</option>
+        </select>
+      </div>
+      <div>
+        <label>选择文件（可多选 / 拖拽 · Excel / CSV / TSV）</label>
+        <div id="dropZone" style="border:1.5px dashed var(--line);border-radius:11px;padding:14px;text-align:center;
+             background:#fafcff;cursor:pointer;transition:.15s">
+          <div style="font-size:13px;color:var(--sub)">点击选择，或将多个平台的文件拖到这里</div>
+          <div style="font-size:11px;color:#9aa6b2;margin-top:4px">每天可一次选入 鸡蛋/奶粉 × 各平台 全部文件批量入库</div>
+          <input type="file" id="upFile" multiple accept=".xlsx,.xls,.csv,.tsv,.txt" style="display:none">
+        </div>
+      </div>
+    </div>
+    <div id="filePreview" style="margin-top:10px;display:none">
+      <div style="font-size:12px;color:var(--sub);margin-bottom:6px">已选 <b id="fileCount">0</b> 个文件（自动识别结果，可在上方手动调整平台/品类后统一覆盖）：</div>
+      <div id="fileList" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+    </div>
+    <div style="margin-top:12px" class="row" style="align-items:center">
+      <button id="btnUpload">批量上传并入库</button>
+      <button class="ghost" id="btnAddPlat">+ 新增平台</button>
+      <button class="ghost" id="btnAddCat">+ 新增品类</button>
+    </div>
+    <div class="msg" id="upMsg"></div>
+    <div class="hint">数据保存位置：本地数据库 <code>data/company.db</code>，每次上传都<b>永久累积</b>，关闭/重启不丢失；按「平台+品类+日期」自动去重，重复上传同一天会覆盖更新。下方「导入记录」可追溯每一次上传，看板可按时间范围查询历史趋势。</div>
+  </div>
+
+  <!-- 筛选 -->
+  <div class="card">
+    <h3><span class="dot"></span>② 筛选与时间段</h3>
+    <div class="row">
+      <div><label>开始日期</label><input type="date" id="fStart"></div>
+      <div><label>结束日期</label><input type="date" id="fEnd"></div>
+    </div>
+    <div style="margin-top:8px"><label>平台（可多选）</label><div class="checks" id="fPlatforms"></div></div>
+    <div style="margin-top:8px"><label>品类（可多选）</label><div class="checks" id="fCategories"></div></div>
+    <div style="margin-top:12px"><button id="btnApply">应用筛选</button>
+      <button class="ghost" id="btnReset">重置</button>
+      <span class="tag" id="rangeTag"></span>
+    </div>
+  </div>
+
+  <!-- KPI -->
+  <div class="kpis" id="kpis"></div>
+
+  <!-- 图表 -->
+  <div class="charts">
+    <div class="card">
+      <div class="flex-head"><h3><span class="dot"></span>销售流水 vs 推广投入</h3>
+        <label style="margin:0;display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="chkSplit"> 按平台/品类拆分</label></div>
+      <div class="chart-box"><canvas id="chartTrend"></canvas></div>
+    </div>
+    <div class="card">
+      <h3><span class="dot"></span>各平台销售 & 推广花费</h3>
+      <div class="chart-box"><canvas id="chartPlatform"></canvas></div>
+    </div>
+    <div class="card">
+      <h3><span class="dot"></span>推广投产比(ROI)趋势</h3>
+      <div class="chart-box"><canvas id="chartRoi"></canvas></div>
+    </div>
+    <div class="card">
+      <h3><span class="dot"></span>品类销售占比</h3>
+      <div class="chart-box"><canvas id="chartCat"></canvas></div>
+    </div>
+  </div>
+
+  <!-- 商品榜 -->
+  <div class="card">
+    <div class="flex-head">
+      <h3><span class="dot"></span>商品推广效果 TOP 榜</h3>
+      <div class="row" style="flex:0;min-width:auto;gap:8px">
+        <select id="prodPlatform" style="width:120px"></select>
+        <select id="prodCategory" style="width:110px"></select>
+        <button class="ghost sm" id="btnProd">查询</button>
+      </div>
+    </div>
+    <div class="tbl-scroll">
+      <table id="tblProducts"><thead><tr>
+        <th>商品</th><th>平台</th><th>品类</th><th>推广花费</th><th>推广成交额</th><th>ROI</th><th>成交笔数</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <!-- 每日明细 -->
+  <div class="card">
+    <div class="flex-head">
+      <h3><span class="dot"></span>每日经营明细（汇总当前筛选）</h3>
+      <button class="ghost sm" id="btnExpCsv">导出 CSV</button>
+    </div>
+    <div class="tbl-scroll">
+      <table id="tblDaily"><thead><tr>
+        <th>日期</th><th>销售流水(元)</th><th>订单数</th><th>推广花费(元)</th>
+        <th>推广成交额(元)</th><th>ROI</th><th>曝光</th><th>点击</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <!-- 用户管理（仅管理员） -->
+  <div class="card" id="userCard" style="display:none">
+    <div class="flex-head">
+      <h3><span class="dot"></span>用户管理（团队成员 · 共用同一数据库）</h3>
+      <span class="tag">管理员可创建/删除账号，所有账号共享全部数据</span>
+    </div>
+    <div class="row">
+      <div>
+        <label>新用户名</label>
+        <input type="text" id="nuUser" placeholder="如 zhangsan">
+      </div>
+      <div>
+        <label>初始密码</label>
+        <input type="text" id="nuPass" placeholder="设置初始密码">
+      </div>
+      <div>
+        <label>角色</label>
+        <select id="nuRole">
+          <option value="user">普通成员（可上传/查看）</option>
+          <option value="admin">管理员（可管理用户）</option>
+        </select>
+      </div>
+      <div style="flex:0 0 auto;align-self:flex-end">
+        <button id="btnAddUser">+ 创建用户</button>
+      </div>
+    </div>
+    <div class="msg" id="userMsg"></div>
+    <div class="tbl-scroll" style="margin-top:10px">
+      <table id="tblUsers"><thead><tr>
+        <th>ID</th><th>用户名</th><th>角色</th><th>创建时间</th><th>操作</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <!-- 导入记录 -->
+  <div class="card">
+    <div class="flex-head">
+      <h3><span class="dot"></span>导入记录（历史数据存档）</h3>
+      <span class="tag">删除某条记录会同步移除其数据</span>
+    </div>
+    <div class="tbl-scroll">
+      <table id="tblImports"><thead><tr>
+        <th>ID</th><th>文件名</th><th>平台</th><th>品类</th><th>类型</th>
+        <th>行数</th><th>数据区间</th><th>上传人</th><th>导入时间</th><th>操作</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const TYPE_MAP={sales:"销售订单",promo_daily:"推广分天",promo_product:"推广商品汇总"};
+const PALETTE=["#2f6bff","#13c2c2","#f5a623","#e34d59","#7c5cff","#21a366","#ff7a45","#36cfc9"];
+let charts={};
+
+const fmtMoney=v=>"¥"+(v==null?0:v).toLocaleString("zh-CN",{maximumFractionDigits:2});
+const fmtNum=v=>(v==null?0:v).toLocaleString("zh-CN",{maximumFractionDigits:0});
+const fmtPct=v=>(v==null?0:(v*100)).toFixed(1)+"%";
+
+function loadDimensions(){
+  return fetch("/api/dimensions").then(r=>r.json()).then(d=>{
+    // 上传区：input + datalist 可输入
+    document.getElementById("lstPlatform").innerHTML=d.platforms.map(p=>`<option value="${p}">`).join("");
+    document.getElementById("lstCategory").innerHTML=d.categories.map(c=>`<option value="${c}">`).join("");
+    // 商品榜下拉
+    const pp=document.getElementById("prodPlatform");
+    const pc=document.getElementById("prodCategory");
+    pp.innerHTML='<option value="">全部平台</option>'+d.platforms.map(p=>`<option>${p}</option>`).join("");
+    pc.innerHTML='<option value="">全部品类</option>'+d.categories.map(c=>`<option>${c}</option>`).join("");
+    renderChecks("fPlatforms",d.platforms);
+    renderChecks("fCategories",d.categories);
+  });
+}
+function renderChecks(elId,arr){
+  document.getElementById(elId).innerHTML=arr.map(a=>`<label><input type="checkbox" value="${a}" checked> ${a}</label>`).join("");
+}
+function checkedVals(elId){
+  return [...document.querySelectorAll("#"+elId+" input:checked")].map(i=>i.value);
+}
+
+function getFilters(){
+  return {
+    start:document.getElementById("fStart").value,
+    end:document.getElementById("fEnd").value,
+    platforms:checkedVals("fPlatforms").join(","),
+    categories:checkedVals("fCategories").join(",")
+  };
+}
+
+function loadDashboard(){
+  const f=getFilters();
+  const q=new URLSearchParams(f).toString();
+  fetch("/api/overview?"+q).then(r=>r.json()).then(d=>{
+    renderKPIs(d.kpis);
+    renderTrend(d);
+    renderPlatform(d.platform_breakdown);
+    renderRoi(d.daily_trend);
+    renderCat(d.category_breakdown);
+    renderDaily(d.daily_trend);
+    document.getElementById("rangeTag").textContent=
+      (d.date_min||"-")+" 至 "+(d.date_max||"-")+" · 共 "+d.daily_trend.length+" 天";
+    window._overview=d;
+  });
+}
+
+function renderKPIs(k){
+  const html=[
+    {t:"总销售流水",v:fmtMoney(k.total_sales),c:"brand"},
+    {t:"订单总数",v:fmtNum(k.total_orders),c:""},
+    {t:"客单价(AOV)",v:fmtMoney(k.avg_aov),c:"green"},
+    {t:"总推广花费",v:fmtMoney(k.total_promo_cost),c:"amber"},
+    {t:"推广成交额",v:fmtMoney(k.total_promo_sales),c:"brand"},
+    {t:"整体ROI",v:k.overall_roi.toFixed(2),c:"green"},
+    {t:"退款金额",v:fmtMoney(k.total_refund),c:"red"},
+    {t:"退款率",v:fmtPct(k.refund_rate),c:"red"},
+    {t:"销售总件数",v:fmtNum(k.total_units),c:""},
+    {t:"有效平台/品类",v:(window._ov_p||"")||"—",c:""}
+  ];
+  document.getElementById("kpis").innerHTML=html.map(x=>
+    `<div class="kpi ${x.c}"><div class="t">${x.t}</div><div class="v">${x.v}</div></div>`).join("");
+}
+
+function destroy(id){if(charts[id]){charts[id].destroy();delete charts[id];}}
+
+function renderTrend(d){
+  const split=document.getElementById("chkSplit").checked;
+  const labels=d.daily_trend.map(x=>x.date);
+  let datasets;
+  if(split){
+    datasets=d.combo_keys.map((k,i)=>{
+      const data=labels.map(dt=>(d.series[dt]&&d.series[dt][k]?d.series[dt][k].sales:0));
+      return {label:k,data,borderColor:PALETTE[i%PALETTE.length],backgroundColor:PALETTE[i%PALETTE.length],
+              tension:.25,fill:false,pointRadius:2};
+    });
+    // 推广花费合计线
+    datasets.push({label:"推广花费(合计)",data:labels.map(dt=>{
+      let s=0;for(const k in (d.series[dt]||{}))s+=d.series[dt][k].promo_cost||0;return s;}),
+      borderColor:"#e34d59",backgroundColor:"#e34d59",borderDash:[5,4],tension:.25,fill:false,pointRadius:2});
+  }else{
+    datasets=[
+      {label:"销售流水",data:d.daily_trend.map(x=>x.sales),borderColor:"#2f6bff",backgroundColor:"rgba(47,107,255,.12)",tension:.25,fill:true,pointRadius:2},
+      {label:"推广花费",data:d.daily_trend.map(x=>x.promo_cost),borderColor:"#e34d59",backgroundColor:"#e34d59",tension:.25,fill:false,pointRadius:2,borderDash:[5,4]},
+      {label:"推广成交额",data:d.daily_trend.map(x=>x.promo_sales),borderColor:"#13c2c2",backgroundColor:"#13c2c2",tension:.25,fill:false,pointRadius:2}
+    ];
+  }
+  destroy("trend");
+  charts.trend=new Chart(document.getElementById("chartTrend"),{type:"line",
+    data:{labels,datasets},
+    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},
+      plugins:{legend:{position:"bottom",labels:{boxWidth:12,font:{size:11}}},
+        tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtMoney(c.parsed.y)}}},
+      scales:{y:{ticks:{callback:v=>"¥"+fmtNum(v)}}}}});
+}
+
+function renderPlatform(pb){
+  const labels=pb.map(x=>x.platform);
+  destroy("platform");
+  charts.platform=new Chart(document.getElementById("chartPlatform"),{type:"bar",
+    data:{labels,datasets:[
+      {label:"销售流水",data:pb.map(x=>x.sales),backgroundColor:"#2f6bff"},
+      {label:"推广花费",data:pb.map(x=>x.promo_cost),backgroundColor:"#f5a623"}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:"bottom",labels:{boxWidth:12,font:{size:11}}},
+        tooltip:{callbacks:{label:c=>c.dataset.label+": "+fmtMoney(c.parsed.y)}}},
+      scales:{y:{ticks:{callback:v=>"¥"+fmtNum(v)}}}}});
+}
+
+function renderRoi(trend){
+  const labels=trend.map(x=>x.date);
+  const roi=trend.map(x=>x.promo_cost>0?(x.promo_sales/x.promo_cost):null);
+  destroy("roi");
+  charts.roi=new Chart(document.getElementById("chartRoi"),{type:"line",
+    data:{labels,datasets:[{label:"ROI(推广成交额/花费)",data:roi,borderColor:"#21a366",
+      backgroundColor:"rgba(33,163,102,.12)",tension:.25,fill:true,pointRadius:2,spanGaps:true}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:"bottom",labels:{boxWidth:12,font:{size:11}}},
+        tooltip:{callbacks:{label:c=>"ROI: "+(c.parsed.y==null?"无推广":c.parsed.y.toFixed(2))}}},
+      scales:{y:{ticks:{callback:v=>v+"x"}}}}});
+}
+
+function renderCat(cb){
+  destroy("cat");
+  if(!cb.length){document.getElementById("chartCat").getContext("2d").clearRect(0,0,300,300);return;}
+  charts.cat=new Chart(document.getElementById("chartCat"),{type:"doughnut",
+    data:{labels:cb.map(x=>x.category),datasets:[{data:cb.map(x=>x.sales),
+      backgroundColor:cb.map((_,i)=>PALETTE[i%PALETTE.length])}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:"bottom",labels:{boxWidth:12,font:{size:11}}},
+        tooltip:{callbacks:{label:c=>`${c.label}: ${fmtMoney(c.parsed)}`}}}}});
+}
+
+function renderDaily(trend){
+  const tb=document.querySelector("#tblDaily tbody");
+  tb.innerHTML=trend.map(x=>{
+    const roi=x.promo_cost>0?(x.promo_sales/x.promo_cost).toFixed(2):"—";
+    return `<tr><td>${x.date}</td><td>${fmtMoney(x.sales)}</td><td>${fmtNum(x.orders)}</td>
+      <td>${fmtMoney(x.promo_cost)}</td><td>${fmtMoney(x.promo_sales)}</td><td>${roi}</td>
+      <td>${fmtNum(x.exposure)}</td><td>${fmtNum(x.clicks)}</td></tr>`;
+  }).join("")||`<tr><td colspan="8" style="text-align:center;color:#999">暂无数据</td></tr>`;
+}
+
+function loadProducts(){
+  const p=document.getElementById("prodPlatform").value;
+  const c=document.getElementById("prodCategory").value;
+  const q=new URLSearchParams({platform:p,category:c,limit:15}).toString();
+  fetch("/api/products?"+q).then(r=>r.json()).then(rows=>{
+    const tb=document.querySelector("#tblProducts tbody");
+    tb.innerHTML=rows.map(r=>{
+      const roi=r.roi>0?r.roi.toFixed(2):"—";
+      const cls=r.roi>=10?"g":(r.roi>0?"a":"r");
+      return `<tr><td style="max-width:340px;white-space:normal">${r.product_name||"—"}</td>
+        <td><span class="pill">${r.platform}</span></td><td>${r.category}</td>
+        <td>${fmtMoney(r.promo_cost)}</td><td>${fmtMoney(r.promo_sales)}</td>
+        <td><span class="pill ${cls}">${roi}</span></td><td>${fmtNum(r.orders)}</td></tr>`;
+    }).join("")||`<tr><td colspan="7" style="text-align:center;color:#999">暂无数据</td></tr>`;
+  });
+}
+
+function loadImports(){
+  fetch("/api/imports").then(r=>r.json()).then(rows=>{
+    const tb=document.querySelector("#tblImports tbody");
+    tb.innerHTML=rows.map(r=>`<tr>
+      <td>${r.id}</td><td style="max-width:240px;white-space:normal">${r.filename}</td>
+      <td><span class="pill">${r.platform}</span></td><td>${r.category}</td>
+      <td><span class="pill a">${TYPE_MAP[r.data_type]||r.data_type}</span></td>
+      <td>${fmtNum(r.rows)}</td><td>${r.date_min||"—"}~${r.date_max||"—"}</td>
+      <td>${r.uploader||"—"}</td>
+      <td>${r.imported_at}</td>
+      <td><button class="danger sm" onclick="delImport(${r.id})">删除</button></td></tr>`).join("")
+      ||`<tr><td colspan="10" style="text-align:center;color:#999">暂无导入记录</td></tr>`;
+    // 统计平台/品类数
+    const ps=new Set(rows.map(r=>r.platform)),cs=new Set(rows.map(r=>r.category));
+    window._ov_p=ps.size+" / "+cs.size;
+  });
+}
+function delImport(id){
+  if(!confirm("确定删除该导入记录及其对应数据？"))return;
+  fetch("/api/imports/"+id,{method:"DELETE"}).then(()=>{loadImports();loadDashboard();loadDimensions();});
+}
+
+function showMsg(el,ok,text){const m=document.getElementById(el);m.className="msg "+(ok?"ok":"err");m.textContent=text;}
+
+// 选文件 / 拖拽后：预览每个文件并调用 /api/guess 自动识别
+const dropZone=document.getElementById("dropZone");
+const upFile=document.getElementById("upFile");
+dropZone.onclick=()=>upFile.click();
+["dragover","dragenter"].forEach(ev=>dropZone.addEventListener(ev,e=>{e.preventDefault();dropZone.style.borderColor="var(--brand)";dropZone.style.background="#eef3ff";}));
+["dragleave","drop"].forEach(ev=>dropZone.addEventListener(ev,e=>{e.preventDefault();dropZone.style.borderColor="var(--line)";dropZone.style.background="#fafcff";}));
+dropZone.addEventListener("drop",e=>{upFile.files=e.dataTransfer.files;renderPreview();});
+upFile.addEventListener("change",renderPreview);
+
+function renderPreview(){
+  const files=upFile.files;
+  const pv=document.getElementById("filePreview");
+  const list=document.getElementById("fileList");
+  document.getElementById("fileCount").textContent=files.length;
+  if(!files.length){pv.style.display="none";return;}
+  pv.style.display="block";
+  list.innerHTML="";
+  const names=[...files].map(f=>encodeURIComponent(f.name));
+  Promise.all(names.map(n=>fetch("/api/guess?filename="+n).then(r=>r.json()).catch(()=>({})))).then(guesses=>{
+    [...files].forEach((f,i)=>{
+      const g=guesses[i]||{};
+      const chip=document.createElement("div");
+      chip.style.cssText="background:#f3f6fb;border:1px solid var(--line);border-radius:9px;padding:6px 9px;font-size:11px;max-width:230px";
+      chip.innerHTML=`<div style="font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.name}</div>`+
+        `<div style="color:var(--sub);margin-top:2px">${g.platform||"?平台"} / ${g.category||"?品类"} / ${(TYPE_MAP[g.data_type]||"自动")}</div>`;
+      list.appendChild(chip);
+    });
+  });
+}
+
+// 上传（批量）
+document.getElementById("btnUpload").onclick=()=>{
+  const files=upFile.files;
+  if(!files.length){showMsg("upMsg",false,"请先选择文件");return;}
+  const plat=document.getElementById("upPlatform").value.trim();
+  const cat=document.getElementById("upCategory").value.trim();
+  const type=document.getElementById("upType").value;
+  if(!plat||!cat){showMsg("upMsg",false,"请选择或输入平台与品类（或在文件名中包含平台/品类）");return;}
+  const fd=new FormData();
+  for(const f of files) fd.append("files",f);
+  fd.append("platform",plat);fd.append("category",cat);fd.append("data_type",type);
+  showMsg("upMsg",true,`正在上传 ${files.length} 个文件…`);
+  fetch("/api/upload_batch",{method:"POST",body:fd}).then(r=>r.json()).then(d=>{
+    if(d.error){showMsg("upMsg",false,"失败："+d.error);return;}
+    const okList=d.results.filter(r=>r.ok);
+    const failList=d.results.filter(r=>!r.ok);
+    let msg=`批量完成：成功 ${d.success}/${d.total}`;
+    const sample=okList[0];
+    if(sample) msg+=` · 如「${sample.platform}/${sample.category}」入库 ${sample.rows} 行（${sample.date_min||"-"}~${sample.date_max||"-"}）`;
+    if(failList.length) msg+="；失败："+failList.map(r=>r.filename+"(原因:"+r.error+")").join("、");
+    showMsg("upMsg",failList.length===0,msg);
+    upFile.value="";renderPreview();
+    loadDimensions();loadDashboard();loadImports();loadProducts();
+  }).catch(e=>showMsg("upMsg",false,"失败："+e));
+};
+
+document.getElementById("btnAddPlat").onclick=()=>{const v=prompt("输入新平台名称：");if(v)document.getElementById("upPlatform").value=v;};
+document.getElementById("btnAddCat").onclick=()=>{const v=prompt("输入新品类名称：");if(v)document.getElementById("upCategory").value=v;};
+
+document.getElementById("btnApply").onclick=loadDashboard;
+document.getElementById("btnReset").onclick=()=>{
+  document.getElementById("fStart").value="";document.getElementById("fEnd").value="";
+  document.querySelectorAll("#fPlatforms input,#fCategories input").forEach(i=>i.checked=true);
+  loadDashboard();
+};
+document.getElementById("chkSplit").onchange=loadDashboard;
+document.getElementById("btnProd").onclick=loadProducts;
+document.getElementById("btnExpCsv").onclick=()=>{
+  if(!window._overview)return;
+  const rows=window._overview.daily_trend;
+  const head=["日期","销售流水","订单数","推广花费","推广成交额","ROI","曝光","点击"];
+  const body=rows.map(x=>[x.date,x.sales,x.orders,x.promo_cost,x.promo_sales,
+    (x.promo_cost>0?(x.promo_sales/x.promo_cost).toFixed(2):""),x.exposure,x.clicks].join(","));
+  const csv="\ufeff"+head.join(",")+"\n"+body.join("\n");
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+  a.download="每日经营明细_"+new Date().toISOString().slice(0,10)+".csv";a.click();
+};
+
+// init
+checkAuth();
+
+// ===================== 鉴权 =====================
+// 全局拦截：数据接口返回 401 时自动弹回登录（登录接口本身除外）
+const _origFetch=window.fetch.bind(window);
+window.fetch=function(url,opts){
+  return _origFetch(url,opts).then(res=>{
+    if(res.status===401 && !String(url).includes("/api/login")) showLogin();
+    return res;
+  });
+};
+
+function showLogin(){
+  document.getElementById("loginOverlay").style.display="flex";
+  document.getElementById("appWrap").style.display="none";
+  document.getElementById("lgUser").value="";
+  document.getElementById("lgPass").value="";
+}
+function showApp(user){
+  document.getElementById("loginOverlay").style.display="none";
+  document.getElementById("appWrap").style.display="block";
+  document.getElementById("userBox").style.display="inline";
+  document.getElementById("guestBox").style.display="none";
+  document.getElementById("userBox").innerHTML=
+    `👤 ${user.username}（${user.role==="admin"?"管理员":"成员"}） <a href="javascript:doLogout()" style="color:#fff;margin-left:8px;text-decoration:underline">退出</a>`;
+  document.getElementById("userCard").style.display=(user.role==="admin")?"block":"none";
+  loadDimensions().then(()=>{loadDashboard();loadImports();loadProducts();});
+  if(user.role==="admin") loadUsers();
+}
+function checkAuth(){
+  fetch("/api/me").then(r=>r.json()).then(d=>{
+    if(d.user) showApp(d.user); else showLogin();
+  }).catch(()=>showLogin());
+}
+function doLogin(){
+  const u=document.getElementById("lgUser").value.trim();
+  const p=document.getElementById("lgPass").value;
+  const m=document.getElementById("lgMsg");
+  m.style.display="block";m.style.color="#e34d59";m.textContent="登录中…";
+  fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({username:u,password:p})}).then(r=>r.json().then(d=>({r,data:d}))).then(({r,data})=>{
+    if(r.ok && data.ok){ m.style.display="none"; showApp(data.user); }
+    else { m.style.color="#e34d59"; m.textContent=(data.error)||"登录失败"; }
+  }).catch(e=>{ m.style.color="#e34d59"; m.textContent="网络错误："+e; });
+}
+function doLogout(){
+  fetch("/api/logout",{method:"POST"}).then(()=>showLogin());
+}
+
+// ===================== 用户管理（admin） =====================
+function loadUsers(){
+  fetch("/api/users").then(r=>r.json()).then(rows=>{
+    const tb=document.querySelector("#tblUsers tbody");
+    if(!Array.isArray(rows)){tb.innerHTML=`<tr><td colspan="5" style="text-align:center;color:#999">无权限</td></tr>`;return;}
+    tb.innerHTML=rows.map(r=>`<tr>
+      <td>${r.id}</td><td>${r.username}</td>
+      <td><span class="pill ${r.role==="admin"?"a":"g"}">${r.role==="admin"?"管理员":"成员"}</span></td>
+      <td>${r.created_at||"—"}</td>
+      <td><button class="danger sm" onclick="delUser(${r.id})">删除</button></td></tr>`).join("")
+      ||`<tr><td colspan="5" style="text-align:center;color:#999">暂无用户</td></tr>`;
+  });
+}
+document.getElementById("btnAddUser").onclick=()=>{
+  const u=document.getElementById("nuUser").value.trim();
+  const p=document.getElementById("nuPass").value;
+  const role=document.getElementById("nuRole").value;
+  if(!u||!p){showMsg("userMsg",false,"用户名和密码必填");return;}
+  fetch("/api/users",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({username:u,password:p,role})}).then(r=>r.json()).then(d=>{
+    if(d.ok){showMsg("userMsg",true,"已创建用户 "+u);document.getElementById("nuUser").value="";document.getElementById("nuPass").value="";loadUsers();}
+    else showMsg("userMsg",false,d.error||"创建失败");
+  });
+};
+function delUser(id){
+  if(!confirm("确定删除该用户？其上传的历史数据仍保留在库中。"))return;
+  fetch("/api/users/"+id,{method:"DELETE"}).then(()=>loadUsers());
+}
+</script>
+</body>
+</html>
