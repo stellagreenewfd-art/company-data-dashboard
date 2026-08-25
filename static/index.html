@@ -264,7 +264,7 @@
     <div class="msg" id="userMsg"></div>
     <div class="tbl-scroll" style="margin-top:10px">
       <table id="tblUsers"><thead><tr>
-        <th>ID</th><th>用户名</th><th>角色</th><th>创建时间</th><th>操作</th>
+        <th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th>
       </tr></thead><tbody></tbody></table>
     </div>
   </div>
@@ -594,11 +594,11 @@ function doRegister(){
   fetch("/api/register",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({username:u,password:p})}).then(r=>r.json().then(d=>({r,data:d}))).then(({r,data})=>{
     if(r.ok && data.ok){
-      fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({username:u,password:p})}).then(r2=>r2.json().then(d2=>({r:r2,data:d2}))).then(({r,data})=>{
-        if(r.ok&&data.ok){ m.style.display="none"; showApp(data.user); }
-        else { m.style.color="#e34d59"; m.textContent="注册成功但自动登录失败，请返回登录"; showLoginForm(); }
-      });
+      m.style.color="#2f9e44"; m.textContent="✅ "+(data.message||"申请已提交，等待管理员审核通过后即可登录");
+      document.getElementById("rgUser").value="";
+      document.getElementById("rgPass").value="";
+      document.getElementById("rgPass2").value="";
+      setTimeout(showLoginForm, 1500);
     } else { m.style.color="#e34d59"; m.textContent=data.error||"注册失败"; }
   }).catch(e=>{ m.style.color="#e34d59"; m.textContent="网络错误："+e; });
 }
@@ -645,14 +645,38 @@ function doLogout(){
 function loadUsers(){
   fetch("/api/users").then(r=>r.json()).then(rows=>{
     const tb=document.querySelector("#tblUsers tbody");
-    if(!Array.isArray(rows)){tb.innerHTML=`<tr><td colspan="5" style="text-align:center;color:#999">无权限</td></tr>`;return;}
-    tb.innerHTML=rows.map(r=>`<tr>
+    if(!Array.isArray(rows)){tb.innerHTML=`<tr><td colspan="6" style="text-align:center;color:#999">无权限</td></tr>`;return;}
+    tb.innerHTML=rows.map(r=>{
+      const st=r.status||"active";
+      const stHtml = st==="active"
+        ? `<span class="pill g">已通过</span>`
+        : st==="pending"
+        ? `<span class="pill" style="background:#fff7e6;color:#d48806">待审核</span>`
+        : `<span class="pill" style="background:#fff1f0;color:#cf1322">已拒绝</span>`;
+      let act;
+      if(r.role==="admin"){
+        act = `<span style="color:#bbb">—</span>`;
+      } else if(st==="active"){
+        act = `<button class="danger sm" onclick="delUser(${r.id})">删除</button>`;
+      } else {
+        act = `<button class="primary sm" onclick="approveUser(${r.id})">通过</button> <button class="danger sm" onclick="rejectUser(${r.id})">拒绝</button>`;
+      }
+      return `<tr>
       <td>${r.id}</td><td>${r.username}</td>
       <td><span class="pill ${r.role==="admin"?"a":"g"}">${r.role==="admin"?"管理员":"成员"}</span></td>
+      <td>${stHtml}</td>
       <td>${r.created_at||"—"}</td>
-      <td><button class="danger sm" onclick="delUser(${r.id})">删除</button></td></tr>`).join("")
-      ||`<tr><td colspan="5" style="text-align:center;color:#999">暂无用户</td></tr>`;
+      <td>${act}</td></tr>`;
+    }).join("")
+      ||`<tr><td colspan="6" style="text-align:center;color:#999">暂无用户</td></tr>`;
   });
+}
+function approveUser(id){
+  fetch("/api/users/"+id+"/approve",{method:"POST"}).then(()=>loadUsers());
+}
+function rejectUser(id){
+  if(!confirm("拒绝该用户的注册申请？"))return;
+  fetch("/api/users/"+id+"/reject",{method:"POST"}).then(()=>loadUsers());
 }
 document.getElementById("btnAddUser").onclick=()=>{
   const u=document.getElementById("nuUser").value.trim();

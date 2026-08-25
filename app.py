@@ -46,6 +46,7 @@ def init_db():
       username TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',
+      status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT
     );
     CREATE TABLE IF NOT EXISTS imports (
@@ -87,6 +88,11 @@ def init_db():
     cols = [r[1] for r in c.execute("PRAGMA table_info(imports)")]
     if "user_id" not in cols:
         try: c.execute("ALTER TABLE imports ADD COLUMN user_id INTEGER")
+        except Exception: pass
+    # 旧库兼容：若 users 没有 status 列则补上
+    ucols = [r[1] for r in c.execute("PRAGMA table_info(users)")]
+    if "status" not in ucols:
+        try: c.execute("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
         except Exception: pass
     # 首次运行：播种管理员账号（仅当无任何用户时）
     cnt = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -409,16 +415,20 @@ def api_login():
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
     conn = get_db(); c = conn.cursor()
-    r = c.execute("SELECT id,username,password_hash,role FROM users WHERE username=?", (username,)).fetchone()
+    r = c.execute("SELECT id,username,password_hash,role,status FROM users WHERE username=?", (username,)).fetchone()
     conn.close()
     if not r or not check_password_hash(r["password_hash"], password):
         return jsonify({"error": "用户名或密码错误"}), 401
+    if r.get("status") == "pending":
+        return jsonify({"error": "账号待管理员审核，请等待审核通过后再登录"}), 403
+    if r.get("status") == "rejected":
+        return jsonify({"error": "账号审核未通过，请联系管理员"}), 403
     session["user_id"] = r["id"]
     return jsonify({"ok": True, "user": {"username": r["username"], "role": r["role"]}})
 
 @app.route("/api/register", methods=["POST"])
 def api_register():
-    """自助注册：开放给任何人，注册后默认 role=user（不能自助成为管理员）。"""
+    """自助注册：开放给任何人，提交申请后默认角色为成员、状态为待审核，需管理员审核通过后生效。"""
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
@@ -432,11 +442,11 @@ def api_register():
     exists = c.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone()
     if exists:
         conn.close(); return jsonify({"error": "用户名已存在"}), 400
-    c.execute("INSERT INTO users (username,password_hash,role,created_at) VALUES (?,?,?,?)",
-              (username, generate_password_hash(password), "user",
+    c.execute("INSERT INTO users (username,password_hash,role,status,created_at) VALUES (?,?,?,?,?)",
+              (username, generate_password_hash(password), "user", "pending",
                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit(); conn.close()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "message": "申请已提交，等待管理员审核通过后即可登录"})
 
 @app.route("/api/logout", methods=["POST"])
 def api_logout():
@@ -453,7 +463,7 @@ def api_me():
 @admin_required
 def list_users():
     conn = get_db(); c = conn.cursor()
-    rows = c.execute("SELECT id,username,role,created_at FROM users ORDER BY id").fetchall()
+    rows = c.execute("SELECT id,username,role,status,created_at FROM users ORDER BY id").fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
 
@@ -484,6 +494,25 @@ def delete_user(uid):
         return jsonify({"error": "不能删除自己"}), 400
     conn = get_db(); c = conn.cursor()
     c.execute("DELETE FROM users WHERE id=?", (uid,))
+    conn.commit(); conn.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/users/<int:uid>/approve", methods=["POST"])
+@admin_required
+def approve_user(uid):
+    conn = get_db(); c = conn.cursor()
+    c.execute("UPDATE users SET status='active' WHERE id=?", (uid,))
+    conn.commit(); conn.close()
+    return jsonify({"ok": True})
+
+@app.route("/api/users/<int:uid>/reject", methods=["POST"])
+@admin_required
+def reject_user(uid):
+    conn = get_db(); c = conn.cursor()
+    r = c.execute("SELECT 1 FROM users WHERE id=? AND role='admin'", (uid,)).fetchone()
+    if r:
+        conn.close(); return jsonify({"error": "不能拒绝管理员账号"}), 400
+    c.execute("UPDATE users SET status='rejected' WHERE id=?", (uid,))
     conn.commit(); conn.close()
     return jsonify({"ok": True})
 
