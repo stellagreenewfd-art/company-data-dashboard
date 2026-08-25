@@ -71,7 +71,7 @@
 <!-- 登录遮罩 -->
 <div id="loginOverlay" style="position:fixed;inset:0;z-index:999;background:linear-gradient(120deg,#2f6bff,#13c2c2);
      display:flex;align-items:center;justify-content:center;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
-  <div style="background:#fff;border-radius:16px;padding:30px 34px;width:340px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+  <div id="loginCard" style="background:#fff;border-radius:16px;padding:30px 34px;width:340px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
     <h2 style="margin:0 0 4px;font-size:20px;color:#1f2d3d">📊 数据管理系统</h2>
     <p style="margin:0 0 18px;font-size:12px;color:#6b7785">请登录后上传与查看公司数据</p>
     <label style="font-size:12px;color:#6b7785;display:block;margin-bottom:4px">用户名</label>
@@ -83,6 +83,28 @@
            onkeydown="if(event.key==='Enter')doLogin()">
     <button onclick="doLogin()" style="width:100%;padding:11px;background:#2f6bff;color:#fff;border:none;border-radius:9px;font-size:14px;font-weight:700">登录</button>
     <div id="lgMsg" style="margin-top:12px;font-size:12px;display:none"></div>
+    <div style="margin-top:14px;text-align:center">
+      <a href="javascript:showReg()" style="color:#2f6bff;font-size:12px;text-decoration:none">没有账号？注册</a>
+    </div>
+  </div>
+
+  <div id="regForm" style="display:none;background:#fff;border-radius:16px;padding:30px 34px;width:340px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <h2 style="margin:0 0 4px;font-size:20px;color:#1f2d3d">📊 注册账号</h2>
+    <p style="margin:0 0 18px;font-size:12px;color:#6b7785">创建成员账号，注册后可上传并查看全部数据</p>
+    <label style="font-size:12px;color:#6b7785;display:block;margin-bottom:4px">用户名</label>
+    <input id="rgUser" type="text" placeholder="设定用户名（2-20 字符）"
+           style="width:100%;padding:9px 11px;border:1px solid #e6eaf0;border-radius:9px;font-size:14px;margin-bottom:12px">
+    <label style="font-size:12px;color:#6b7785;display:block;margin-bottom:4px">密码</label>
+    <input id="rgPass" type="password" placeholder="至少 6 位"
+           style="width:100%;padding:9px 11px;border:1px solid #e6eaf0;border-radius:9px;font-size:14px;margin-bottom:12px">
+    <label style="font-size:12px;color:#6b7785;display:block;margin-bottom:4px">确认密码</label>
+    <input id="rgPass2" type="password" placeholder="再次输入密码"
+           style="width:100%;padding:9px 11px;border:1px solid #e6eaf0;border-radius:9px;font-size:14px;margin-bottom:16px">
+    <button onclick="doRegister()" style="width:100%;padding:11px;background:#2f6bff;color:#fff;border:none;border-radius:9px;font-size:14px;font-weight:700">注册</button>
+    <div id="rgMsg" style="margin-top:12px;font-size:12px;display:none"></div>
+    <div style="margin-top:14px;text-align:center">
+      <a href="javascript:showLoginForm()" style="color:#2f6bff;font-size:12px;text-decoration:none">已有账号？登录</a>
+    </div>
   </div>
 </div>
 
@@ -442,7 +464,7 @@ function loadImports(){
       <td>${fmtNum(r.rows)}</td><td>${r.date_min||"—"}~${r.date_max||"—"}</td>
       <td>${r.uploader||"—"}</td>
       <td>${r.imported_at}</td>
-      <td><button class="danger sm" onclick="delImport(${r.id})">删除</button></td></tr>`).join("")
+      <td>${(window.currentRole==="admin"||r.user_id===window.currentUid)?"<button class=\"danger sm\" onclick=\"delImport("+r.id+")\">删除</button>":"<span style=\"color:#bbb\">—</span>"}</td></tr>`).join("")
       ||`<tr><td colspan="10" style="text-align:center;color:#999">暂无导入记录</td></tr>`;
     // 统计平台/品类数
     const ps=new Set(rows.map(r=>r.platform)),cs=new Set(rows.map(r=>r.category));
@@ -548,6 +570,38 @@ window.fetch=function(url,opts){
   });
 };
 
+function showReg(){
+  document.getElementById("loginCard").style.display="none";
+  document.getElementById("regForm").style.display="block";
+  document.getElementById("rgMsg").style.display="none";
+  document.getElementById("rgUser").value="";
+  document.getElementById("rgPass").value="";
+  document.getElementById("rgPass2").value="";
+}
+function showLoginForm(){
+  document.getElementById("loginCard").style.display="block";
+  document.getElementById("regForm").style.display="none";
+  document.getElementById("lgMsg").style.display="none";
+}
+function doRegister(){
+  const u=document.getElementById("rgUser").value.trim();
+  const p=document.getElementById("rgPass").value;
+  const p2=document.getElementById("rgPass2").value;
+  const m=document.getElementById("rgMsg"); m.style.display="block";
+  if(!u||!p||!p2){ m.style.color="#e34d59"; m.textContent="请填写用户名和密码"; return; }
+  if(p!==p2){ m.style.color="#e34d59"; m.textContent="两次输入的密码不一致"; return; }
+  m.style.color="#6b7785"; m.textContent="注册中…";
+  fetch("/api/register",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({username:u,password:p})}).then(r=>r.json().then(d=>({r,data:d}))).then(({r,data})=>{
+    if(r.ok && data.ok){
+      fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({username:u,password:p})}).then(r2=>r2.json().then(d2=>({r:r2,data:d2}))).then(({r,data})=>{
+        if(r.ok&&data.ok){ m.style.display="none"; showApp(data.user); }
+        else { m.style.color="#e34d59"; m.textContent="注册成功但自动登录失败，请返回登录"; showLoginForm(); }
+      });
+    } else { m.style.color="#e34d59"; m.textContent=data.error||"注册失败"; }
+  }).catch(e=>{ m.style.color="#e34d59"; m.textContent="网络错误："+e; });
+}
 function showLogin(){
   document.getElementById("loginOverlay").style.display="flex";
   document.getElementById("appWrap").style.display="none";
@@ -555,6 +609,8 @@ function showLogin(){
   document.getElementById("lgPass").value="";
 }
 function showApp(user){
+  window.currentUid = user.id;
+  window.currentRole = user.role;
   document.getElementById("loginOverlay").style.display="none";
   document.getElementById("appWrap").style.display="block";
   document.getElementById("userBox").style.display="inline";

@@ -416,6 +416,28 @@ def api_login():
     session["user_id"] = r["id"]
     return jsonify({"ok": True, "user": {"username": r["username"], "role": r["role"]}})
 
+@app.route("/api/register", methods=["POST"])
+def api_register():
+    """自助注册：开放给任何人，注册后默认 role=user（不能自助成为管理员）。"""
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    if not username or not password:
+        return jsonify({"error": "用户名和密码必填"}), 400
+    if not (2 <= len(username) <= 20):
+        return jsonify({"error": "用户名长度需 2-20 个字符"}), 400
+    if len(password) < 6:
+        return jsonify({"error": "密码至少 6 位"}), 400
+    conn = get_db(); c = conn.cursor()
+    exists = c.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone()
+    if exists:
+        conn.close(); return jsonify({"error": "用户名已存在"}), 400
+    c.execute("INSERT INTO users (username,password_hash,role,created_at) VALUES (?,?,?,?)",
+              (username, generate_password_hash(password), "user",
+               datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit(); conn.close()
+    return jsonify({"ok": True})
+
 @app.route("/api/logout", methods=["POST"])
 def api_logout():
     session.clear()
@@ -736,7 +758,16 @@ def imports():
 @app.route("/api/imports/<int:import_id>", methods=["DELETE"])
 @login_required
 def delete_import(import_id):
+    u = get_current_user()
+    if not u:
+        return jsonify({"error": "未登录"}), 401
     conn = get_db(); c = conn.cursor()
+    row = c.execute("SELECT user_id FROM imports WHERE id=?", (import_id,)).fetchone()
+    if not row:
+        conn.close(); return jsonify({"error": "记录不存在"}), 404
+    # 仅本人或管理员可删除（管理员可删所有人的）
+    if u["role"] != "admin" and row["user_id"] != u["id"]:
+        conn.close(); return jsonify({"error": "只能删除自己上传的数据"}), 403
     c.execute("DELETE FROM orders WHERE import_id=?", (import_id,))
     c.execute("DELETE FROM daily_metrics WHERE import_id=?", (import_id,))
     c.execute("DELETE FROM product_stats WHERE import_id=?", (import_id,))
