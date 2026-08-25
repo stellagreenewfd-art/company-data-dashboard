@@ -32,9 +32,24 @@ PORT = int(os.environ.get("PORT", 5000))
 import traceback
 @app.errorhandler(500)
 def handle_500(e):
+    tb = traceback.format_exc()
+    try:
+        with open(os.path.join(DATA_DIR, "last_error.txt"), "w", encoding="utf-8") as f:
+            f.write("TIME: %s\nPATH: %s\nERROR: %s\n\n%s" % (
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), request.path, str(e), tb))
+    except Exception:
+        pass
     if request.path.startswith("/api/"):
-        return jsonify({"error": "服务器内部错误", "detail": str(e), "traceback": traceback.format_exc()}), 500
+        return jsonify({"error": "服务器内部错误", "detail": str(e), "traceback": tb}), 500
     return str(e), 500
+
+@app.route("/api/debug/log")
+def debug_log():
+    """返回最近一次 500 的完整 traceback（仅用于排查，部署稳定后可删除）。"""
+    p = os.path.join(DATA_DIR, "last_error.txt")
+    if not os.path.exists(p):
+        return jsonify({"log": "(暂无错误记录)"})
+    return jsonify({"log": open(p, encoding="utf-8").read()})
 
 # ----------------------------------------------------------------------------
 # DB

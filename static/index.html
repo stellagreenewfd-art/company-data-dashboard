@@ -642,7 +642,14 @@ function doLogin(){
   fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({username:u,password:p})}).then(r=>r.json().then(d=>({r,data:d}))).then(({r,data})=>{
     if(r.ok && data.ok){ m.style.display="none"; showApp(data.user); }
-    else { m.style.color="#e34d59"; m.textContent=(data.error)||"登录失败"; }
+    else {
+      m.style.color="#e34d59";
+      let txt = (data.error)||"登录失败";
+      if(data.detail) txt += "｜详情：" + data.detail;
+      m.textContent = txt;
+      // 调试：把完整 traceback 打到控制台，方便截图给我
+      if(data.traceback) console.error(data.traceback);
+    }
   }).catch(e=>{ m.style.color="#e34d59"; m.textContent="网络错误："+e; });
 }
 function doLogout(){
