@@ -7,7 +7,7 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -w 2 -b 0.0.0.0:$PORT app:app
-    healthCheckPath: /api/me
+    healthCheckPath: /api/health
     envVars:
       - key: SECRET_KEY
         generateValue: true

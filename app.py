@@ -372,6 +372,11 @@ def store_promo_product(df, platform, category, import_id, period, conn):
 def index():
     return send_file(os.path.join(STATIC, "index.html"))
 
+@app.route("/api/health")
+def health():
+    """公开健康检查端点（Render 健康检查用，无需登录）。"""
+    return jsonify({"status": "ok"})
+
 @app.route("/api/dimensions")
 @login_required
 def dimensions():
