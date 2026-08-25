@@ -501,8 +501,11 @@ function renderPreview(){
       const g=guesses[i]||{};
       const chip=document.createElement("div");
       chip.style.cssText="background:#f3f6fb;border:1px solid var(--line);border-radius:9px;padding:6px 9px;font-size:11px;max-width:230px";
+      const missing = !g.category;
+      chip.style.borderColor = missing ? "#ff4d4f" : "var(--line)";
+      chip.style.background = missing ? "#fff2f0" : "#f3f6fb";
       chip.innerHTML=`<div style="font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.name}</div>`+
-        `<div style="color:var(--sub);margin-top:2px">${g.platform||"?平台"} / ${g.category||"?品类"} / ${(TYPE_MAP[g.data_type]||"自动")}</div>`;
+        `<div style="color:${missing?'#ff4d4f':'var(--sub)'};margin-top:2px">${g.platform||"?平台"} / ${g.category||"⚠️ 需手动选品类"} / ${(TYPE_MAP[g.data_type]||"自动")}</div>`;
       list.appendChild(chip);
     });
   });
@@ -515,7 +518,12 @@ document.getElementById("btnUpload").onclick=()=>{
   const plat=document.getElementById("upPlatform").value.trim();
   const cat=document.getElementById("upCategory").value.trim();
   const type=document.getElementById("upType").value;
-  if(!plat||!cat){showMsg("upMsg",false,"请选择或输入平台与品类（或在文件名中包含平台/品类）");return;}
+  if(!plat){showMsg("upMsg",false,"请选择或输入平台（或在文件名中包含平台名）");return;}
+  // 品类框为空时按文件名/内容自动识别；有值时强制覆盖所有文件
+  if(!cat){
+    const sure = confirm("品类栏为空，系统将按每个文件的文件名/内容自动识别品类。\n如果文件名不规范可能识别失败，建议先在上方的「品类」栏统一填写。\n确定继续自动识别吗？");
+    if(!sure) return;
+  }
   const fd=new FormData();
   for(const f of files) fd.append("files",f);
   fd.append("platform",plat);fd.append("category",cat);fd.append("data_type",type);

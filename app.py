@@ -262,6 +262,46 @@ def parse_meta_from_filename(fn):
         data_type = "sales"
     return platform, category, data_type
 
+# 内容辅助识别品类：当文件名无法识别时，扫描表头+样本数据里的关键词
+CONTENT_CATEGORY_HINTS = {
+    "奶粉": ["奶粉", "皇家美素佳儿", "美素佳儿", "飞鹤", "爱他美", "a2", "惠氏", "牛栏"],
+    "鸡蛋": ["鸡蛋", "蛋", "沙门氏菌", "叶黄素", "可生食"],
+    "智能锁": ["智能锁", "指纹锁", "密码锁", "鹿客", "凯迪仕", "德施曼"],
+    "文创饰品": ["文创", "饰品", "项链", "手链", "耳环"],
+}
+
+def infer_category_from_content(df):
+    """扫描 DataFrame 的列名与前 N 行文本，推断品类。返回品类字符串或空。"""
+    if df is None or df.empty:
+        return ""
+    text = " ".join(str(c) for c in df.columns)
+    # 取前 200 行、前 10 列的样本，避免大文件太慢
+    sample = df.head(200)
+    for col in sample.columns[:10]:
+        try:
+            text += " " + " ".join(str(v) for v in sample[col].dropna().astype(str).tolist())
+        except Exception:
+            pass
+    text = text.lower()
+    scores = {}
+    for cat, hints in CONTENT_CATEGORY_HINTS.items():
+        scores[cat] = sum(1 for h in hints if h.lower() in text)
+    if scores:
+        best = max(scores, key=scores.get)
+        if scores[best] > 0:
+            return best
+    return ""
+
+def is_total_row(row_dict):
+    """判断一行是否为平台导出的合计/总计/注释行。"""
+    pid = str(row_dict.get("product_id", "")).strip().lower()
+    pname = str(row_dict.get("product_name", "")).strip()
+    if pid in ("总计", "合计", "汇总", "total", "all", "sum"):
+        return True
+    if pname in ("-", "总计", "合计", "汇总") and not row_dict.get("product_id"):
+        return True
+    return False
+
 # ----------------------------------------------------------------------------
 # parsing -> store
 # ----------------------------------------------------------------------------
@@ -354,13 +394,24 @@ def store_promo_product(df, platform, category, import_id, period, conn):
     for _, r in df.iterrows():
         pid = str(r[pid_col]) if pid_col else None
         if not pid or pid in ("nan", ""): pid = "UNK_" + str(len(rows))
+        # 过滤平台导出表里的“总计/合计/汇总/注释”行
+        pids = pid.strip().lower()
+        if pids in ("总计", "合计", "汇总", "total", "sum", "all"):
+            continue
         pname = str(r[pname_col])[:200] if pname_col and r[pname_col] is not None else None
+        if pname and pname.strip() in ("-", "总计", "合计", "汇总") and (not pid or pid.startswith("UNK_")):
+            continue
+        cost = to_float(r[cost_col]) if cost_col else None
+        sales = to_float(r[sales_col]) if sales_col else None
+        orders = to_float(r[ord_col]) if ord_col else None
+        # 过滤注释/空行：没有商品ID、没有商品名、关键指标全空
+        if pid.startswith("UNK_") and not pname and not any([cost, sales, orders]):
+            continue
         extras = json.dumps({str(k): (None if (isinstance(r[k], float) and pd.isna(r[k])) else r[k]) for k in cols}, ensure_ascii=False, default=str)
         rows.append((import_id, platform, category, pid, pname, period,
-                     to_float(r[cost_col]) if cost_col else None,
-                     to_float(r[sales_col]) if sales_col else None,
+                     cost, sales,
                      to_float(r[roi_col]) if roi_col else None,
-                     to_float(r[ord_col]) if ord_col else None,
+                     orders,
                      to_float(r[exp_col]) if exp_col else None,
                      to_float(r[clk_col]) if clk_col else None, extras))
     c = conn.cursor()
@@ -525,9 +576,10 @@ def process_upload(file_storage, platform_override, category_override, data_type
     gp, gc, gtype = parse_meta_from_filename(fn)
     if not platform: platform = gp
     if not category: category = gc
-    if not platform or not category:
+    # 注意：category 的内容推断在读取 df 后二次校验，见下方
+    if not platform:
         return {"filename": fn, "ok": False,
-                "error": "无法识别平台/品类，请在文件名中包含（如 鸡蛋/奶粉/拼多多/抖音）或手动选择"}
+                "error": "无法识别平台，请在文件名中包含平台名（如 拼多多/抖音/天猫）或手动选择"}
     tmp = os.path.join(DATA_DIR, "tmp_" + str(datetime.datetime.now().timestamp()).replace(".", "") + "_" + fn)
     file_storage.save(tmp)
     try:
@@ -550,6 +602,12 @@ def process_upload(file_storage, platform_override, category_override, data_type
             if not data_type:
                 data_type = gtype or detect_data_type(df)
         df = df.dropna(how="all")
+        # 文件名没识别出品类的，再用内容推断一次；仍识别不出则报错
+        if not category:
+            category = infer_category_from_content(df)
+        if not category:
+            return {"filename": fn, "ok": False,
+                    "error": "无法识别品类，请在文件名中包含品类名（如 鸡蛋/奶粉）或手动选择"}
         cur = conn.cursor()
         cur.execute("INSERT INTO imports (filename,platform,category,data_type,rows,imported_at,user_id) VALUES (?,?,?,?,?,?,?)",
                     (fn, platform, category, data_type, len(df), datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id))
