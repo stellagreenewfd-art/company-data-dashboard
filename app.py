@@ -56,7 +56,7 @@ def debug_log():
 # ----------------------------------------------------------------------------
 def get_db():
     conn = sqlite3.connect(DB, timeout=30)
-    conn.row_factory = sqlite3.Row
+    conn.row_factory = lambda cursor, row: dict(zip([col[0] for col in cursor.description], row))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=30000")
     return conn
