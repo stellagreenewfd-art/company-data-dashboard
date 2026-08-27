@@ -84,6 +84,8 @@ def init_db():
       order_id TEXT, order_date TEXT, pay_amount REAL,
       item_count REAL, status TEXT, is_refund INTEGER DEFAULT 0,
       refund_amount REAL, product_name TEXT, shop TEXT, province TEXT,
+      channel TEXT, coop_type TEXT,
+      commission_base REAL, commission_rate REAL, commission_amount REAL,
       extras TEXT,
       UNIQUE(platform, category, order_id)
     );
@@ -117,11 +119,19 @@ def init_db():
     if "status" not in ucols:
         try: c.execute("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
         except Exception: pass
-    # 旧库兼容：orders 补达人维度列（历史库升级不丢数据）
+    # 旧库兼容：orders 补达人维度列 + 渠道/合作类型/佣金列（历史库升级不丢数据）
     ocols = [r[1] for r in c.execute("PRAGMA table_info(orders)")]
     for col in ("influencer_id", "influencer_name"):
         if col not in ocols:
             try: c.execute(f"ALTER TABLE orders ADD COLUMN {col} TEXT")
+            except Exception: pass
+    for col in ("channel", "coop_type"):
+        if col not in ocols:
+            try: c.execute(f"ALTER TABLE orders ADD COLUMN {col} TEXT")
+            except Exception: pass
+    for col in ("commission_base", "commission_rate", "commission_amount"):
+        if col not in ocols:
+            try: c.execute(f"ALTER TABLE orders ADD COLUMN {col} REAL")
             except Exception: pass
     # 首次运行：播种管理员账号（仅当无任何用户时）
     cnt = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -241,9 +251,11 @@ def pick_sheet(xl, data_type):
 def detect_data_type(df):
     cols = list(df.columns)
     colstr = " ".join(str(c) for c in cols)
-    has_order = any(k in colstr for k in ["订单号", "订单编号", "主订单编号"])
+    has_order = any(k in colstr for k in ["订单号", "订单编号", "主订单编号", "订单ID"])
     has_date = "日期" in cols
     has_promo = any(k in colstr for k in ["成交花费", "交易额", "投产比"])
+    if has_order and has_promo:
+        return "sales"   # 含订单号的混合表默认按销售处理；推广指标需手动选 promo_* 上传
     if has_order: return "sales"
     if has_date and has_promo: return "promo_daily"
     if has_promo: return "promo_product"
@@ -355,6 +367,22 @@ def store_sales(df, platform, category, import_id, conn):
     # 达人维度：先取 ID 再取名称，避免「达人ID」被名称候选误吞
     infid_col = find_col(cols, ["达人ID", "达人id", "达人编号", "主播ID"])
     infl_col = find_col(cols, ["达人名称", "达人", "达人昵称", "主播", "博主"])
+    # 渠道/合作类型/佣金维度
+    channel_col = find_col(cols, ["推广渠道", "投放渠道", "渠道"])
+    coop_col = find_col(cols, ["合作类型", "合作方式", "业务类型"])
+    com_base_col = find_col(cols, ["有效销售金额（计佣金额）", "有效销售金额(计佣金额)",
+                                   "计佣金额", "有效销售金额", "佣金基数"])
+    com_rate_col = find_col(cols, ["佣金率", "佣金比例", "费率"])
+    com_amt_col = find_col(cols, ["预估支出佣金", "预估佣金", "佣金支出", "佣金金额"])
+
+    # 记录各关键字段识别情况，供上传回执提示（避免"列被静默忽略"）
+    recognized = {
+        "订单号": oid_col, "日期": date_col, "金额": pay_col, "数量": qty_col,
+        "状态": status_col, "退款金额": refund_col, "商品名称": prod_col,
+        "店铺": shop_col, "省份": prov_col, "达人ID": infid_col, "达人名称": infl_col,
+        "推广渠道": channel_col, "合作类型": coop_col, "计佣金额": com_base_col,
+        "佣金率": com_rate_col, "预估佣金": com_amt_col,
+    }
 
     rows = []
     for _, r in df.iterrows():
@@ -380,17 +408,26 @@ def store_sales(df, platform, category, import_id, conn):
         infid = (str(r[infid_col])[:50] if infid_col and r[infid_col] is not None
                  and str(r[infid_col]) not in ("nan", "") else None)
         infl = str(r[infl_col])[:100] if infl_col and r[infl_col] is not None else None
+        channel = str(r[channel_col])[:50] if channel_col and r[channel_col] is not None else None
+        if channel and channel.strip().lower() in ("nan", "无", ""): channel = None
+        coop = str(r[coop_col])[:50] if coop_col and r[coop_col] is not None else None
+        if coop and coop.strip().lower() in ("nan", "无", ""): coop = None
+        com_base = to_float(r[com_base_col]) if com_base_col else None
+        com_rate = to_float(r[com_rate_col]) if com_rate_col else None
+        com_amt = to_float(r[com_amt_col]) if com_amt_col else None
         extras = json.dumps({str(k): (None if (isinstance(r[k], float) and pd.isna(r[k])) else r[k]) for k in cols}, ensure_ascii=False, default=str)
         rows.append((import_id, platform, category, oid, d, pay, qty, status,
-                     is_refund, refund_amt, prod, shop, prov, infid, infl, extras))
+                     is_refund, refund_amt, prod, shop, prov, infid, infl,
+                     channel, coop, com_base, com_rate, com_amt, extras))
     c = conn.cursor()
     c.executemany(
         """INSERT OR REPLACE INTO orders
            (import_id,platform,category,order_id,order_date,pay_amount,item_count,
             status,is_refund,refund_amount,product_name,shop,province,
-            influencer_id,influencer_name,extras)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
-    return len(rows)
+            influencer_id,influencer_name,channel,coop_type,
+            commission_base,commission_rate,commission_amount,extras)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
+    return {"rows": len(rows), "fields": {k: bool(v) for k, v in recognized.items()}}
 
 def store_promo_daily(df, platform, category, import_id, conn):
     cols = list(df.columns)
@@ -401,6 +438,8 @@ def store_promo_daily(df, platform, category, import_id, conn):
     ord_col = find_col(cols, ["成交笔数", "净成交笔数"])
     exp_col = find_col(cols, ["曝光量"])
     clk_col = find_col(cols, ["点击量"])
+    recognized = {"日期": date_col, "成交花费": cost_col, "交易额": sales_col,
+                  "投产比": roi_col, "成交笔数": ord_col, "曝光量": exp_col, "点击量": clk_col}
     rows = []
     for _, r in df.iterrows():
         d = to_date(r[date_col]) if date_col else None
@@ -419,18 +458,21 @@ def store_promo_daily(df, platform, category, import_id, conn):
            (import_id,platform,category,data_date,promo_cost,promo_sales,roi,
             order_count,exposure,clicks,extras)
            VALUES (?,?,?,?,?,?,?,?,?,?,?)""", rows)
-    return len(rows)
+    return {"rows": len(rows), "fields": {k: bool(v) for k, v in recognized.items()}}
 
 def store_promo_product(df, platform, category, import_id, period, conn):
     cols = list(df.columns)
-    pid_col = find_col(cols, ["商品ID", "商品id"])
-    pname_col = find_col(cols, ["商品名称", "推广名称", "商品标题"])
+    pid_col = find_col(cols, ["商品ID", "商品id", "规格ID", "货号", "商品编号", "SKUID"])
+    pname_col = find_col(cols, ["商品名称", "推广名称", "商品标题", "规格名称", "宝贝标题", "商品"])
     cost_col = find_col(cols, ["成交花费(元)", "成交花费"])
     sales_col = find_col(cols, ["交易额(元)", "净交易额(元)", "交易额"])
     roi_col = find_col(cols, ["实际投产比", "投产比"])
     ord_col = find_col(cols, ["成交笔数", "净成交笔数"])
     exp_col = find_col(cols, ["曝光量"])
     clk_col = find_col(cols, ["点击量"])
+    recognized = {"商品ID": pid_col, "商品名称": pname_col, "成交花费": cost_col,
+                  "交易额": sales_col, "投产比": roi_col, "成交笔数": ord_col,
+                  "曝光量": exp_col, "点击量": clk_col}
     rows = []
     for _, r in df.iterrows():
         pid = str(r[pid_col]) if pid_col else None
@@ -440,7 +482,12 @@ def store_promo_product(df, platform, category, import_id, period, conn):
         if pids in ("总计", "合计", "汇总", "total", "sum", "all"):
             continue
         pname = str(r[pname_col])[:200] if pname_col and r[pname_col] is not None else None
-        if pname and pname.strip() in ("-", "总计", "合计", "汇总") and (not pid or pid.startswith("UNK_")):
+        # 清洗常见无意义值；空名用 product_id 兜底，避免前端显示 "—"
+        if pname and pname.strip().lower() in ("-", "nan", "", "总计", "合计", "汇总"):
+            pname = None
+        if not pname and pid and not pid.startswith("UNK_"):
+            pname = f"商品-{pid}"
+        if not pname:
             continue
         cost = to_float(r[cost_col]) if cost_col else None
         sales = to_float(r[sales_col]) if sales_col else None
@@ -461,7 +508,7 @@ def store_promo_product(df, platform, category, import_id, period, conn):
            (import_id,platform,category,product_id,product_name,period,promo_cost,
             promo_sales,roi,order_count,exposure,clicks,extras)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
-    return len(rows)
+    return {"rows": len(rows), "fields": {k: bool(v) for k, v in recognized.items()}}
 
 # ----------------------------------------------------------------------------
 # API
@@ -653,16 +700,24 @@ def process_upload(file_storage, platform_override, category_override, data_type
         cur.execute("INSERT INTO imports (filename,platform,category,data_type,rows,imported_at,user_id) VALUES (?,?,?,?,?,?,?)",
                     (fn, platform, category, data_type, len(df), datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id))
         import_id = cur.lastrowid
+        store_result = {"rows": 0, "fields": {}}
         if data_type == "sales":
-            n = store_sales(df, platform, category, import_id, conn)
+            store_result = store_sales(df, platform, category, import_id, conn)
         elif data_type == "promo_daily":
-            n = store_promo_daily(df, platform, category, import_id, conn)
+            store_result = store_promo_daily(df, platform, category, import_id, conn)
         elif data_type == "promo_product":
             p0, p1 = parse_period_from_filename(fn)
             period = (p0 or "") + ("~" + p1 if p1 and p1 != p0 else "")
-            n = store_promo_product(df, platform, category, import_id, period, conn)
-        else:
-            n = 0
+            store_result = store_promo_product(df, platform, category, import_id, period, conn)
+        n = store_result.get("rows", 0)
+        fields = store_result.get("fields", {})
+        missing_fields = [k for k, v in fields.items() if not v]
+        # 同时含订单与推广列、却按销售导入 → 提示投放数据可能被忽略
+        warn = ""
+        if data_type == "sales":
+            colstr = " ".join(str(c) for c in df.columns)
+            if any(k in colstr for k in ["成交花费", "交易额", "投产比"]):
+                warn = "检测到同时存在推广指标列（成交花费/交易额/投产比），已按销售订单入库；投放数据请另选「推广分天」/「推广商品汇总」类型上传"
         dmin = dmax = None
         if data_type == "sales":
             rr = cur.execute("SELECT MIN(order_date),MAX(order_date) FROM orders WHERE import_id=?", (import_id,)).fetchone()
@@ -673,7 +728,8 @@ def process_upload(file_storage, platform_override, category_override, data_type
         cur.execute("UPDATE imports SET date_min=?,date_max=? WHERE id=?", (dmin, dmax, import_id))
         conn.commit()
         return {"filename": fn, "ok": True, "data_type": data_type, "rows": n,
-                "platform": platform, "category": category, "date_min": dmin, "date_max": dmax}
+                "platform": platform, "category": category, "date_min": dmin, "date_max": dmax,
+                "recognized_fields": fields, "missing_fields": missing_fields, "warning": warn}
     except Exception as e:
         return {"filename": fn, "ok": False, "error": str(e)}
     finally:
@@ -762,19 +818,107 @@ def overview():
                    COUNT(*) raw_rows, COUNT(DISTINCT order_id) raw_orders
             FROM orders {wc_s_all}""", p_s_all).fetchall()
     raw = all_rows[0] if all_rows else (0, 0, 0)
-    # promo
+    # promo：以 daily_metrics 为主；当只有商品推广汇总(promo_product)时，
+    # 按 product_stats.period 解析出的日期范围均摊补充，避免"商品榜有数、汇总为0"
     wc_p, p_p = wc("daily_metrics", "data_date")
-    promo_rows = c.execute(
+    promo_rows = [dict(r) for r in c.execute(
         f"""SELECT data_date, platform, category,
                    COALESCE(promo_cost,0) promo_cost,
                    COALESCE(promo_sales,0) promo_sales,
                    roi, COALESCE(order_count,0) orders,
                    COALESCE(exposure,0) exposure, COALESCE(clicks,0) clicks
-            FROM daily_metrics {wc_p}""", p_p).fetchall()
+            FROM daily_metrics {wc_p}""", p_p)]
+
+    # 从 product_stats 补充 promo（按原始 period 天数均摊，只生成与筛选区间交集的日期）
+    clauses_ps = []; params_ps = []
+    if platforms: clauses_ps.append("platform IN ({})".format(','.join('?'*len(platforms)))); params_ps += platforms
+    if categories: clauses_ps.append("category IN ({})".format(','.join('?'*len(categories)))); params_ps += categories
+    wc_ps = (" WHERE " + " AND ".join(clauses_ps)) if clauses_ps else ""
+    ps_rows = c.execute(
+        f"""SELECT platform, category, period,
+                   COALESCE(SUM(promo_cost),0) promo_cost,
+                   COALESCE(SUM(promo_sales),0) promo_sales,
+                   COALESCE(SUM(order_count),0) orders,
+                   COALESCE(SUM(exposure),0) exposure,
+                   COALESCE(SUM(clicks),0) clicks
+            FROM product_stats {wc_ps} GROUP BY platform, category, period""", params_ps).fetchall()
+    from collections import defaultdict
+    ps_daily = defaultdict(lambda: {"promo_cost":0.0, "promo_sales":0.0, "orders":0.0,
+                                    "exposure":0.0, "clicks":0.0})
+    # period 缺失（文件名无日期）的推广数据：无法按天分摊，但应计入汇总
+    ps_nodate = {"promo_cost":0.0, "promo_sales":0.0, "orders":0.0,
+                 "exposure":0.0, "clicks":0.0}
+    filter_start = start or None
+    filter_end = end or None
+    for r in ps_rows:
+        period = (r["period"] or "").strip()
+        if not period:
+            ps_nodate["promo_cost"] += r["promo_cost"] or 0
+            ps_nodate["promo_sales"] += r["promo_sales"] or 0
+            ps_nodate["orders"] += r["orders"] or 0
+            ps_nodate["exposure"] += r["exposure"] or 0
+            ps_nodate["clicks"] += r["clicks"] or 0
+            continue
+        p0, p1 = parse_period_from_filename(period.replace("/", "").replace("-", ""))
+        if not p0: continue
+        p_end = p1 or p0
+        try:
+            ps_dt0 = datetime.datetime.strptime(p0, "%Y-%m-%d").date()
+            ps_dt1 = datetime.datetime.strptime(p_end, "%Y-%m-%d").date()
+        except Exception:
+            continue
+        if ps_dt1 < ps_dt0: continue
+        orig_days = (ps_dt1 - ps_dt0).days + 1
+        if orig_days <= 0: continue
+        # 与筛选区间取交集
+        eff0, eff1 = ps_dt0, ps_dt1
+        if filter_start:
+            try:
+                fs = datetime.datetime.strptime(filter_start, "%Y-%m-%d").date()
+                eff0 = max(eff0, fs)
+            except Exception: pass
+        if filter_end:
+            try:
+                fe = datetime.datetime.strptime(filter_end, "%Y-%m-%d").date()
+                eff1 = min(eff1, fe)
+            except Exception: pass
+        if eff1 < eff0: continue
+        # 按原始 period 天数均摊，避免长周期被筛选区间放大
+        for i in range((eff1 - eff0).days + 1):
+            d = (eff0 + datetime.timedelta(days=i)).strftime("%Y-%m-%d")
+            key = (d, r["platform"], r["category"])
+            ps_daily[key]["promo_cost"] += (r["promo_cost"] or 0) / orig_days
+            ps_daily[key]["promo_sales"] += (r["promo_sales"] or 0) / orig_days
+            ps_daily[key]["orders"] += (r["orders"] or 0) / orig_days
+            ps_daily[key]["exposure"] += (r["exposure"] or 0) / orig_days
+            ps_daily[key]["clicks"] += (r["clicks"] or 0) / orig_days
+    # 合并：若 daily_metrics 已有同一天同平台同品类，累加补充；否则新增
+    dm_keys = {(r["data_date"], r["platform"], r["category"]) for r in promo_rows}
+    for (d, plat, cat), v in ps_daily.items():
+        if (d, plat, cat) in dm_keys:
+            for r in promo_rows:
+                if r["data_date"] == d and r["platform"] == plat and r["category"] == cat:
+                    r["promo_cost"] += v["promo_cost"]
+                    r["promo_sales"] += v["promo_sales"]
+                    r["orders"] += v["orders"]
+                    r["exposure"] += v["exposure"]
+                    r["clicks"] += v["clicks"]
+                    break
+        else:
+            promo_rows.append({"data_date": d, "platform": plat, "category": cat,
+                               "promo_cost": v["promo_cost"], "promo_sales": v["promo_sales"],
+                               "roi": None, "orders": v["orders"],
+                               "exposure": v["exposure"], "clicks": v["clicks"]})
+
     # 退款（跨全部订单：有效成交后的退款 + 显式退款金额）
     wc_r, p_r = wc("orders", "order_date")
     wc_r_ref = wc_r + ((" AND " ) if wc_r else " WHERE ") + "(COALESCE(refund_amount,0)>0 OR is_refund=1)"
     refund_row = c.execute(f"SELECT COALESCE(SUM(refund_amount),0), COALESCE(SUM(is_refund),0) FROM orders {wc_r_ref}", p_r).fetchone()
+    # 渠道 / 合作类型 分布（A：推广渠道、合作类型已提为专用字段）
+    chan_rows = c.execute(f"SELECT COALESCE(channel,'未标注') ch, COALESCE(SUM(pay_amount),0) s FROM orders {wc_s_valid} GROUP BY ch", p_s).fetchall()
+    coop_rows = c.execute(f"SELECT COALESCE(coop_type,'未标注') cp, COALESCE(SUM(pay_amount),0) s FROM orders {wc_s_valid} GROUP BY cp", p_s).fetchall()
+    channel_breakdown = [{"channel": r["ch"], "sales": round(r["s"], 2)} for r in chan_rows]
+    coop_breakdown = [{"coop_type": r["cp"], "sales": round(r["s"], 2)} for r in coop_rows]
     conn.close()
 
     # KPIs
@@ -783,8 +927,8 @@ def overview():
     total_rows = sum(r["rows"] for r in sales_rows)        # 原始行数（含拆单重复）
     total_units = sum(r["units"] for r in sales_rows)
     total_refund = refund_row[0]
-    total_promo_cost = sum(r["promo_cost"] for r in promo_rows)
-    total_promo_sales = sum(r["promo_sales"] for r in promo_rows)
+    total_promo_cost = sum(r["promo_cost"] for r in promo_rows) + ps_nodate["promo_cost"]
+    total_promo_sales = sum(r["promo_sales"] for r in promo_rows) + ps_nodate["promo_sales"]
     avg_aov = (total_sales / total_orders) if total_orders else 0
     overall_roi = (total_promo_sales / total_promo_cost) if total_promo_cost else 0
     refund_rate = (total_refund / total_sales) if total_sales else 0
@@ -862,6 +1006,8 @@ def overview():
         "series": {d: series[d] for d in dates},
         "platform_breakdown": platform_breakdown,
         "category_breakdown": category_breakdown,
+        "channel_breakdown": channel_breakdown,
+        "coop_breakdown": coop_breakdown,
         "platforms": platforms_set,
         "categories": categories_set,
         "date_min": dates[0] if dates else None,
@@ -878,6 +1024,7 @@ def products():
     clauses = []; params = []
     if platform: clauses.append("platform=?"); params.append(platform)
     if category: clauses.append("category=?"); params.append(category)
+    clauses.append("(product_name IS NOT NULL AND product_name != '')")  # 过滤空名伪商品
     wc = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = c.execute(
         f"""SELECT product_name, platform, category, period,

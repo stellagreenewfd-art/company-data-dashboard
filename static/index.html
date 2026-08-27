@@ -161,6 +161,7 @@
       <button class="ghost" id="btnAddCat">+ 新增品类</button>
     </div>
     <div class="msg" id="upMsg"></div>
+    <div id="uploadReceipt" style="margin-top:10px;display:none"></div>
     <div class="hint">数据保存位置：本地数据库 <code>data/company.db</code>，每次上传都<b>永久累积</b>，关闭/重启不丢失；按「平台+品类+日期」自动去重，重复上传同一天会覆盖更新。下方「导入记录」可追溯每一次上传，看板可按时间范围查询历史趋势。</div>
   </div>
 
@@ -181,6 +182,21 @@
 
   <!-- KPI -->
   <div class="kpis" id="kpis"></div>
+
+  <!-- 渠道 / 合作类型 分布 -->
+  <div class="card">
+    <h3><span class="dot"></span>渠道 &amp; 合作类型分布（按有效成交销售额）</h3>
+    <div class="row">
+      <div style="flex:1;min-width:260px">
+        <div style="font-size:12px;color:var(--sub);margin-bottom:6px">推广渠道</div>
+        <div id="channelBreakdown" class="breakdown"></div>
+      </div>
+      <div style="flex:1;min-width:260px">
+        <div style="font-size:12px;color:var(--sub);margin-bottom:6px">合作类型</div>
+        <div id="coopBreakdown" class="breakdown"></div>
+      </div>
+    </div>
+  </div>
 
   <!-- 图表 -->
   <div class="charts">
@@ -333,6 +349,7 @@ function loadDashboard(){
     renderPlatform(d.platform_breakdown);
     renderRoi(d.daily_trend);
     renderCat(d.category_breakdown);
+    renderChannelCoop(d);
     renderDaily(d.daily_trend);
     document.getElementById("rangeTag").textContent=
       (d.date_min||"-")+" 至 "+(d.date_max||"-")+" · 共 "+d.daily_trend.length+" 天";
@@ -425,6 +442,28 @@ function renderCat(cb){
     options:{responsive:true,maintainAspectRatio:false,
       plugins:{legend:{position:"bottom",labels:{boxWidth:12,font:{size:11}}},
         tooltip:{callbacks:{label:c=>`${c.label}: ${fmtMoney(c.parsed)}`}}}}});
+}
+
+function renderChannelCoop(d){
+  const render=(el, list)=>{
+    const box=document.getElementById(el);
+    if(!list||!list.length){box.innerHTML=`<div style="color:#9aa6b2;font-size:12px">暂无数据</div>`;return;}
+    const max=Math.max(...list.map(x=>x.sales),1);
+    box.innerHTML=list.map(x=>{
+      const pct=(x.sales/max*100).toFixed(1);
+      return `<div style="margin-bottom:7px">
+        <div style="display:flex;justify-content:space-between;font-size:12px">
+          <span>${x.channel!==undefined?x.channel:x.coop_type}</span>
+          <span style="color:var(--sub)">${fmtMoney(x.sales)}</span>
+        </div>
+        <div style="height:7px;background:#eef1f6;border-radius:4px;overflow:hidden;margin-top:3px">
+          <div style="height:100%;width:${pct}%;background:#2f6bff;border-radius:4px"></div>
+        </div>
+      </div>`;
+    }).join("");
+  };
+  render("channelBreakdown", d.channel_breakdown);
+  render("coopBreakdown", d.coop_breakdown);
 }
 
 function renderDaily(trend){
@@ -537,6 +576,20 @@ document.getElementById("btnUpload").onclick=()=>{
     if(sample) msg+=` · 如「${sample.platform}/${sample.category}」入库 ${sample.rows} 行（${sample.date_min||"-"}~${sample.date_max||"-"}）`;
     if(failList.length) msg+="；失败："+failList.map(r=>r.filename+"(原因:"+r.error+")").join("、");
     showMsg("upMsg",failList.length===0,msg);
+    // 详细回执：识别到的字段 / 未识别的关键字段 / 警告
+    const rc=document.getElementById("uploadReceipt");
+    if(okList.length){
+      rc.style.display="block";
+      rc.innerHTML=okList.map(r=>{
+        const miss=r.missing_fields&&r.missing_fields.length?r.missing_fields.join("、"):"无";
+        const warn=r.warning?`<div style="color:#e0913a;margin-top:3px">⚠ ${r.warning}</div>`:"";
+        return `<div style="border:1px solid var(--line);border-radius:9px;padding:8px 10px;margin-bottom:7px;font-size:12px">
+          <div><b>${r.filename}</b> · ${r.platform}/${r.category} · ${TYPE_MAP[r.data_type]||r.data_type} · ${r.rows} 行</div>
+          <div style="color:#9aa6b2;margin-top:2px">未识别的关键字段：<b style="color:#e34d59">${miss}</b></div>
+          ${warn}
+        </div>`;
+      }).join("");
+    } else { rc.style.display="none"; rc.innerHTML=""; }
     upFile.value="";renderPreview();
     loadDimensions();loadDashboard();loadImports();loadProducts();
   }).catch(e=>showMsg("upMsg",false,"失败："+e));

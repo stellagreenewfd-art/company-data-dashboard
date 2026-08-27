@@ -49,8 +49,10 @@ cur.execute(
     (os.path.basename(SRC), "小红书", "鸡蛋", "sales", len(df),
      datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 1))
 iid = cur.lastrowid
-n = app.store_sales(df, "小红书", "鸡蛋", iid, conn)
+res = app.store_sales(df, "小红书", "鸡蛋", iid, conn)
 conn.commit()
+n = res["rows"]
+fields = res["fields"]
 
 row = conn.execute(
     "SELECT COUNT(*), COALESCE(SUM(pay_amount),0), "
@@ -59,6 +61,17 @@ row = conn.execute(
 print(f"\n=== store_sales 端到端结果（这就是用户上传原始表时系统的真实行为）===")
 print(f"  函数返回入库行数 n = {n}")
 print(f"  DB 实际行数 = {row[0]}  金额合计 = {round(row[1],2)}  NULL金额行数 = {row[2]}")
+print("  关键字段识别情况:")
+for k, v in fields.items():
+    print(f"    {k}: {'✅' if v else '❌ 未识别'}")
+# A 验证：渠道/合作类型/佣金字段是否入库
+extra = conn.execute(
+    "SELECT COUNT(*) FILTER (WHERE channel IS NOT NULL), "
+    "COUNT(*) FILTER (WHERE coop_type IS NOT NULL), "
+    "COALESCE(SUM(commission_base),0), COALESCE(SUM(commission_amount),0) "
+    "FROM orders WHERE import_id=?", (iid,)).fetchone()
+print(f"  [A] 推广渠道有值行数={extra[0]}  合作类型有值行数={extra[1]}  "
+      f"计佣金额合计={round(extra[2],2)}  预估佣金合计={round(extra[3],2)}")
 print("  状态分布:", dict(conn.execute(
     "SELECT status,COUNT(*) FROM orders WHERE import_id=? GROUP BY status", (iid,)).fetchall()))
 try:
@@ -67,6 +80,6 @@ try:
         (iid,)).fetchall()]
     print("  达人名称样本:", samples)
 except Exception as e:
-    print("  达人字段: orders 表尚无 influencer_name 列（PATCH 4 未应用）->", type(e).__name__)
+    print("  达人字段: orders 表尚无 influencer_name 列 ->", type(e).__name__)
 conn.close()
 print("\nDONE", DB)
