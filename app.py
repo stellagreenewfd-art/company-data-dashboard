@@ -117,6 +117,12 @@ def init_db():
     if "status" not in ucols:
         try: c.execute("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
         except Exception: pass
+    # 旧库兼容：orders 补达人维度列（历史库升级不丢数据）
+    ocols = [r[1] for r in c.execute("PRAGMA table_info(orders)")]
+    for col in ("influencer_id", "influencer_name"):
+        if col not in ocols:
+            try: c.execute(f"ALTER TABLE orders ADD COLUMN {col} TEXT")
+            except Exception: pass
     # 首次运行：播种管理员账号（仅当无任何用户时）
     cnt = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if cnt == 0:
@@ -187,9 +193,12 @@ def to_date(x):
     return None
 
 def find_col(cols, candidates):
+    cols = [str(c) for c in cols]
     for cand in candidates:
+        cand = str(cand)
         for c in cols:
-            if c == cand or cand in str(c):
+            # 双向子串匹配：兼容「商家实收金额」vs「商家实收金额(元)」这类命名差异
+            if c == cand or cand in c or c in cand:
                 return c
     return None
 
@@ -330,17 +339,22 @@ def is_total_row(row_dict):
 # ----------------------------------------------------------------------------
 def store_sales(df, platform, category, import_id, conn):
     cols = list(df.columns)
-    date_col = find_col(cols, ["订单成交时间", "订单付款时间", "支付时间", "订单创建时间", "日期"])
-    pay_col = find_col(cols, ["用户实付金额(元)", "买家实付金额", "商家实收金额(元)",
-                              "商家应收金额(元)(支付金额)", "商家应收金额", "买家应付货款",
-                              "商品总价(元)", "总金额"])
-    qty_col = find_col(cols, ["商品数量(件)", "宝贝总数量", "SKU件数", "数量"])
-    status_col = find_col(cols, ["订单状态", "售后状态"])
+    date_col = find_col(cols, ["订单成交时间", "订单付款时间", "支付时间", "下单时间",
+                              "成交时间", "订单创建时间", "日期"])
+    pay_col = find_col(cols, ["商家实收金额(元)", "商家实收金额",
+                              "商家应收金额(元)(支付金额)", "商家应收金额",
+                              "用户实付金额(元)", "买家实付金额", "用户实付金额",
+                              "买家应付货款", "商品总价(元)", "总金额", "支付金额", "实付金额"])
+    qty_col = find_col(cols, ["商品数量(件)", "宝贝总数量", "SKU件数", "数量", "件数"])
+    status_col = find_col(cols, ["订单状态", "售后状态", "状态"])
     refund_col = find_col(cols, ["退款金额"])
-    prod_col = find_col(cols, ["商品标题", "商品名称", "SKU名称", "选购商品", "商品"])
-    shop_col = find_col(cols, ["店铺名称"])
-    prov_col = find_col(cols, ["省", "收货地址"])
-    oid_col = find_col(cols, ["订单号", "订单编号", "主订单编号"])
+    prod_col = find_col(cols, ["商品标题", "商品名称", "SKU名称", "选购商品", "商品", "标题", "规格名称"])
+    shop_col = find_col(cols, ["店铺名称", "店铺"])
+    prov_col = find_col(cols, ["省", "收货地址", "收货省"])
+    oid_col = find_col(cols, ["订单号", "订单编号", "主订单编号", "订单ID", "订单", "交易编号", "TradeNo"])
+    # 达人维度：先取 ID 再取名称，避免「达人ID」被名称候选误吞
+    infid_col = find_col(cols, ["达人ID", "达人id", "达人编号", "主播ID"])
+    infl_col = find_col(cols, ["达人名称", "达人", "达人昵称", "主播", "博主"])
 
     rows = []
     for _, r in df.iterrows():
@@ -363,15 +377,19 @@ def store_sales(df, platform, category, import_id, conn):
             v = str(r[prov_col])
             if " " in v: prov = v.split(" ")[0]
             else: prov = v[:10]
+        infid = (str(r[infid_col])[:50] if infid_col and r[infid_col] is not None
+                 and str(r[infid_col]) not in ("nan", "") else None)
+        infl = str(r[infl_col])[:100] if infl_col and r[infl_col] is not None else None
         extras = json.dumps({str(k): (None if (isinstance(r[k], float) and pd.isna(r[k])) else r[k]) for k in cols}, ensure_ascii=False, default=str)
         rows.append((import_id, platform, category, oid, d, pay, qty, status,
-                     is_refund, refund_amt, prod, shop, prov, extras))
+                     is_refund, refund_amt, prod, shop, prov, infid, infl, extras))
     c = conn.cursor()
     c.executemany(
         """INSERT OR REPLACE INTO orders
            (import_id,platform,category,order_id,order_date,pay_amount,item_count,
-            status,is_refund,refund_amount,product_name,shop,province,extras)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
+            status,is_refund,refund_amount,product_name,shop,province,
+            influencer_id,influencer_name,extras)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
     return len(rows)
 
 def store_promo_daily(df, platform, category, import_id, conn):
@@ -718,19 +736,32 @@ def overview():
         if categories: clauses.append(f"category IN ({','.join('?'*len(categories))})"); params += categories
         return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
 
-    # sales — 只统计有效成交（排除取消/退款/未成交/待付款/待成交/已关闭）
-    NEG = ("(order_date IS NOT NULL) AND (status IS NULL OR ("
-           "status NOT LIKE '%取消%' AND status NOT LIKE '%退款成功%' AND "
-           "status NOT LIKE '%未成交%' AND status NOT LIKE '%待付款%' AND "
-           "status NOT LIKE '%待成交%' AND status NOT LIKE '%已关闭%'))")
+    # sales — 口径开关：include_invalid=true 时保留取消/退款等全部订单
+    include_invalid = request.args.get("include_invalid", "").lower() in ("1", "true", "yes")
+    if include_invalid:
+        NEG = "(order_date IS NOT NULL)"
+    else:
+        # 默认有效成交：排除取消/退款成功/未成交/待付款/待成交/已关闭
+        NEG = ("(order_date IS NOT NULL) AND (status IS NULL OR ("
+               "status NOT LIKE '%取消%' AND status NOT LIKE '%退款成功%' AND "
+               "status NOT LIKE '%未成交%' AND status NOT LIKE '%待付款%' AND "
+               "status NOT LIKE '%待成交%' AND status NOT LIKE '%已关闭%'))")
     wc_s, p_s = wc("orders", "order_date")
     wc_s_valid = wc_s + ((" AND " + NEG) if wc_s else (" WHERE " + NEG))
     sales_rows = c.execute(
         f"""SELECT order_date, platform, category,
                    COALESCE(SUM(pay_amount),0) sales,
-                   COUNT(*) orders,
+                   COUNT(*) rows,
+                   COUNT(DISTINCT order_id) orders,
                    COALESCE(SUM(item_count),0) units
             FROM orders {wc_s_valid} GROUP BY order_date, platform, category""", p_s).fetchall()
+    # 同时给一份"含全部状态"的原始订单数/金额，便于前端切换与对账（解决"和上传数对不上"）
+    wc_s_all, p_s_all = wc("orders", "order_date")
+    all_rows = c.execute(
+        f"""SELECT COALESCE(SUM(pay_amount),0) raw_sales,
+                   COUNT(*) raw_rows, COUNT(DISTINCT order_id) raw_orders
+            FROM orders {wc_s_all}""", p_s_all).fetchall()
+    raw = all_rows[0] if all_rows else (0, 0, 0)
     # promo
     wc_p, p_p = wc("daily_metrics", "data_date")
     promo_rows = c.execute(
@@ -748,7 +779,8 @@ def overview():
 
     # KPIs
     total_sales = sum(r["sales"] for r in sales_rows)
-    total_orders = sum(r["orders"] for r in sales_rows)
+    total_orders = sum(r["orders"] for r in sales_rows)   # 已按 order_id 去重
+    total_rows = sum(r["rows"] for r in sales_rows)        # 原始行数（含拆单重复）
     total_units = sum(r["units"] for r in sales_rows)
     total_refund = refund_row[0]
     total_promo_cost = sum(r["promo_cost"] for r in promo_rows)
@@ -814,6 +846,9 @@ def overview():
         "kpis": {
             "total_sales": round(total_sales, 2),
             "total_orders": total_orders,
+            "total_rows": total_rows,
+            "total_raw_orders": raw[2],
+            "total_raw_sales": round(raw[0], 2),
             "avg_aov": round(avg_aov, 2),
             "total_units": round(total_units, 2),
             "total_refund": round(total_refund, 2),
