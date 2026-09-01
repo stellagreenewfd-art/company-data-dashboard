@@ -221,7 +221,7 @@ def read_any(path):
                 return pd.read_csv(path, encoding=enc)
             except Exception:
                 continue
-        return pd.read_csv(path, encoding="utf-8", errors="ignore")
+        return pd.read_csv(path, encoding="utf-8")
     # xlsx / 误命名
     try:
         return pd.read_excel(path)
@@ -319,11 +319,11 @@ def infer_category_from_content(df):
     if df is None or df.empty:
         return ""
     text = " ".join(str(c) for c in df.columns)
-    # 取前 200 行、前 10 列的样本，避免大文件太慢
-    sample = df.head(200)
-    for col in sample.columns[:10]:
+    # 取前 300 行、全部列的样本（商品名常在后列），避免大文件太慢
+    sample = df.head(300)
+    for col in sample.columns:
         try:
-            text += " " + " ".join(str(v) for v in sample[col].dropna().astype(str).tolist())
+            text += " " + " ".join(str(v) for v in sample[col].dropna().astype(str).tolist()[:200])
         except Exception:
             pass
     text = text.lower()
@@ -334,6 +334,36 @@ def infer_category_from_content(df):
         best = max(scores, key=scores.get)
         if scores[best] > 0:
             return best
+    return ""
+
+# 内容辅助识别平台：扫描列名+样本数据里的平台特征词。
+# 顺序即优先级：天猫/京东/拼多多/抖音/小红书/快手/视频号 优先于泛化的“淘宝”，
+# 这样命中“天猫”时不会被“淘宝”抢走。
+CONTENT_PLATFORM_HINTS = [
+    ("天猫",   ["天猫", "tmall", "天猫国际", "天猫卡券"]),
+    ("京东",   ["京东", "jd.com", "jingdong", "京东订单", "京东plus"]),
+    ("拼多多", ["拼多多", "拼单", "pinduoduo", "多多买菜", "多多"]),
+    ("抖音",   ["抖音", "抖店", "douyin", "巨量"]),
+    ("小红书", ["小红书", "蒲公英", "rednote", "薯店"]),
+    ("快手",   ["快手", "kuaishou", "小店通"]),
+    ("视频号", ["视频号", "微信小店", "微信视频号"]),
+    ("淘宝",   ["淘宝", "taobao", "淘宝会员", "淘宝客"]),
+]
+
+def infer_platform_from_content(df):
+    """扫描 DataFrame 的列名与前 N 行文本，推断平台。返回平台字符串或空。"""
+    if df is None or df.empty:
+        return ""
+    text = " ".join(str(c) for c in df.columns).lower()
+    sample = df.head(200)
+    for col in sample.columns[:12]:
+        try:
+            text += " " + " ".join(str(v) for v in sample[col].dropna().astype(str).tolist()).lower()
+        except Exception:
+            pass
+    for plat, hints in CONTENT_PLATFORM_HINTS:
+        if any(h.lower() in text for h in hints):
+            return plat
     return ""
 
 def is_total_row(row_dict):
@@ -664,10 +694,7 @@ def process_upload(file_storage, platform_override, category_override, data_type
     gp, gc, gtype = parse_meta_from_filename(fn)
     if not platform: platform = gp
     if not category: category = gc
-    # 注意：category 的内容推断在读取 df 后二次校验，见下方
-    if not platform:
-        return {"filename": fn, "ok": False,
-                "error": "无法识别平台，请在文件名中包含平台名（如 拼多多/抖音/天猫）或手动选择"}
+    # 注意：platform / category 的内容推断在读取 df 后二次校验，见下方
     tmp = os.path.join(DATA_DIR, "tmp_" + str(datetime.datetime.now().timestamp()).replace(".", "") + "_" + fn)
     file_storage.save(tmp)
     try:
@@ -690,12 +717,18 @@ def process_upload(file_storage, platform_override, category_override, data_type
             if not data_type:
                 data_type = gtype or detect_data_type(df)
         df = df.dropna(how="all")
+        # 平台：文件名没识别出的，再用文件内容（列名/样本）推断；仍无则报错
+        if not platform:
+            platform = infer_platform_from_content(df)
+        if not platform:
+            return {"filename": fn, "ok": False,
+                    "error": "无法识别平台：请在上传前于「平台」下拉框选择，或在文件名含平台名（如 京东/天猫）"}
         # 文件名没识别出品类的，再用内容推断一次；仍识别不出则报错
         if not category:
             category = infer_category_from_content(df)
         if not category:
             return {"filename": fn, "ok": False,
-                    "error": "无法识别品类，请在文件名中包含品类名（如 鸡蛋/奶粉）或手动选择"}
+                    "error": "无法识别品类：请在上传前于「品类」下拉框选择，或在文件名含品类名（如 鸡蛋/奶粉）"}
         cur = conn.cursor()
         cur.execute("INSERT INTO imports (filename,platform,category,data_type,rows,imported_at,user_id) VALUES (?,?,?,?,?,?,?)",
                     (fn, platform, category, data_type, len(df), datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id))
