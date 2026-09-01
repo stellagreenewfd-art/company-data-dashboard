@@ -35,7 +35,7 @@ for path, plat, cat in FILES:
 conn.close()
 
 client = A.app.test_client()
-r = client.post("/api/login", json={"username": "admin", "password": "admin123"})
+r = client.post("/api/login", json={"username": "yjdata2026", "password": "yj2026"})
 assert r.get_json().get("ok"), r.get_json()
 
 r = client.get("/api/overview?start=2026-08-01&end=2026-08-31")

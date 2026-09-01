@@ -28,7 +28,7 @@ conn.commit()
 conn.close()
 
 client = flask_app.test_client()
-r = client.post("/api/login", json={"username": "admin", "password": "admin123"})
+r = client.post("/api/login", json={"username": "yjdata2026", "password": "yj2026"})
 print("login:", r.status_code, r.get_json())
 
 print("\n=== 默认（有效成交，排除取消/退款）===")

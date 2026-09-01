@@ -55,7 +55,7 @@ pip install -r requirements.txt
 Reload 后，访问给你的域名，形如：
 **https://<你的用户名>.pythonanywhere.com**
 
-- 默认管理员：**admin / admin123**（首次登录后务必改密码）
+- 默认管理员：**yjdata2026 / yj2026**（首次登录后务必改密码）
 - 在「用户管理」里添加同事账号（角色 user / admin）
 
 ## 六、上传历史数据

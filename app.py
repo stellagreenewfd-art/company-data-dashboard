@@ -182,9 +182,9 @@ def init_db():
     cnt = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if cnt == 0:
         c.execute("INSERT INTO users (username,password_hash,role,created_at) VALUES (?,?,?,?)",
-                  ("admin", generate_password_hash("admin123"), "admin",
+                  ("yjdata2026", generate_password_hash("yj2026"), "admin",
                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-        print("[init] 已创建默认管理员 admin / admin123，请尽快修改密码")
+        print("[init] 已创建默认管理员 yjdata2026，请尽快修改密码")
     conn.commit(); conn.close()
 
 # ----------------------------------------------------------------------------
