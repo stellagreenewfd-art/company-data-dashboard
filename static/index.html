@@ -133,10 +133,16 @@
         <datalist id="lstCategory"></datalist>
       </div>
       <div>
+        <label>店铺（可空·自动识别）</label>
+        <input id="upShop" list="lstShop" placeholder="如 太极武当金 / 武当pop" autocomplete="off">
+        <datalist id="lstShop"></datalist>
+      </div>
+      <div>
         <label>数据类型（默认自动识别）</label>
         <select id="upType">
           <option value="">自动识别</option>
           <option value="sales">销售订单明细</option>
+          <option value="shop_daily">店铺交易概况分天</option>
           <option value="promo_daily">推广分天数据</option>
           <option value="promo_product">推广商品汇总</option>
         </select>
@@ -251,6 +257,59 @@
     </div>
   </div>
 
+  <!-- 平台×类目 透视表 -->
+  <div class="card">
+    <h3><span class="dot"></span>平台 × 类目 经营透视（销售额 / 费比 / ROI）</h3>
+    <div class="tbl-scroll">
+      <table id="tblMatrix"><thead><tr>
+        <th>平台 / 类目</th><th>销售额</th><th>订单数</th><th>推广花费</th>
+        <th>推广成交额</th><th>费比</th><th>ROI</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <!-- 场景 + 店铺 -->
+  <div class="row">
+    <div class="card" style="flex:1;min-width:340px">
+      <h3><span class="dot"></span>推广场景效果（分场景 ROI）</h3>
+      <div class="tbl-scroll">
+        <table id="tblScenes"><thead><tr>
+          <th>平台</th><th>场景</th><th>花费</th><th>成交额</th><th>ROI</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+    <div class="card" style="flex:1;min-width:340px">
+      <h3><span class="dot"></span>店铺对比（交易概况口径）</h3>
+      <div class="tbl-scroll">
+        <table id="tblShops"><thead><tr>
+          <th>平台</th><th>店铺</th><th>成交金额</th><th>成交单量</th><th>访客数</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 达人榜 + 覆盖检查 -->
+  <div class="row">
+    <div class="card" style="flex:1;min-width:340px">
+      <div class="flex-head">
+        <h3><span class="dot"></span>达人带货榜</h3>
+        <select id="infPlatform" style="width:120px"></select>
+      </div>
+      <div class="tbl-scroll">
+        <table id="tblInfluencers"><thead><tr>
+          <th>达人</th><th>平台</th><th>销售额</th><th>订单数</th><th>佣金</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+    <div class="card" style="flex:1;min-width:340px">
+      <div class="flex-head">
+        <h3><span class="dot"></span>数据覆盖检查（近 14 天）</h3>
+        <span class="tag">订=订单 店=交易概况 推=推广 缺=无数据</span>
+      </div>
+      <div class="tbl-scroll" id="coverageBox"></div>
+    </div>
+  </div>
+
   <!-- 用户管理（仅管理员） -->
   <div class="card" id="userCard" style="display:none">
     <div class="flex-head">
@@ -302,7 +361,7 @@
 </div>
 
 <script>
-const TYPE_MAP={sales:"销售订单",promo_daily:"推广分天",promo_product:"推广商品汇总"};
+const TYPE_MAP={sales:"销售订单",shop_daily:"交易概况分天",promo_daily:"推广分天",promo_product:"推广商品",mixed:"多表混合"};
 const PALETTE=["#2f6bff","#13c2c2","#f5a623","#e34d59","#7c5cff","#21a366","#ff7a45","#36cfc9"];
 let charts={};
 
@@ -315,6 +374,9 @@ function loadDimensions(){
     // 上传区：input + datalist 可输入
     document.getElementById("lstPlatform").innerHTML=d.platforms.map(p=>`<option value="${p}">`).join("");
     document.getElementById("lstCategory").innerHTML=d.categories.map(c=>`<option value="${c}">`).join("");
+    document.getElementById("lstShop").innerHTML=(d.shops||[]).map(s=>`<option value="${s}">`).join("");
+    const ip=document.getElementById("infPlatform");
+    ip.innerHTML='<option value="">全部平台</option>'+d.platforms.map(p=>`<option>${p}</option>`).join("");
     // 商品榜下拉
     const pp=document.getElementById("prodPlatform");
     const pc=document.getElementById("prodCategory");
@@ -351,6 +413,11 @@ function loadDashboard(){
     renderCat(d.category_breakdown);
     renderChannelCoop(d);
     renderDaily(d.daily_trend);
+    renderMatrix(d.matrix);
+    renderScenes(d.scene_breakdown);
+    renderShops(d.shop_breakdown);
+    loadInfluencers();
+    loadCoverage();
     document.getElementById("rangeTag").textContent=
       (d.date_min||"-")+" 至 "+(d.date_max||"-")+" · 共 "+d.daily_trend.length+" 天";
     window._overview=d;
@@ -358,21 +425,80 @@ function loadDashboard(){
 }
 
 function renderKPIs(k){
+  const pop=k.sales_pop;
+  const popTxt=pop==null?"—":(pop>=0?"+":"")+(pop*100).toFixed(1)+"%";
+  const popCls=pop==null?"":(pop>=0?"green":"red");
   const html=[
     {t:"总销售流水",v:fmtMoney(k.total_sales),c:"brand"},
+    {t:"净销售额(扣退款)",v:fmtMoney(k.net_sales),c:"brand"},
     {t:"订单总数",v:fmtNum(k.total_orders),c:""},
     {t:"客单价(AOV)",v:fmtMoney(k.avg_aov),c:"green"},
+    {t:"销售环比(前期)",v:popTxt,c:popCls,sub:k.prev_range?k.prev_range[0]+"~"+k.prev_range[1]:""},
     {t:"总推广花费",v:fmtMoney(k.total_promo_cost),c:"amber"},
     {t:"推广成交额",v:fmtMoney(k.total_promo_sales),c:"brand"},
     {t:"整体ROI",v:k.overall_roi.toFixed(2),c:"green"},
-    {t:"退款金额",v:fmtMoney(k.total_refund),c:"red"},
-    {t:"退款率",v:fmtPct(k.refund_rate),c:"red"},
-    {t:"销售总件数",v:fmtNum(k.total_units),c:""},
-    {t:"有效平台/品类",v:(window._ov_p||"")||"—",c:""}
+    {t:"费比(推广/销售)",v:fmtPct(k.ad_cost_ratio),c:"amber"},
+    {t:"退款金额 / 退款率",v:fmtMoney(k.total_refund)+" / "+fmtPct(k.refund_rate),c:"red"},
   ];
   document.getElementById("kpis").innerHTML=html.map(x=>
-    `<div class="kpi ${x.c}"><div class="t">${x.t}</div><div class="v">${x.v}</div></div>`).join("");
+    `<div class="kpi ${x.c}"><div class="t">${x.t}</div><div class="v">${x.v}${x.sub?` <small>${x.sub}</small>`:""}</div></div>`).join("");
 }
+
+function renderMatrix(rows){
+  const tb=document.querySelector("#tblMatrix tbody");
+  tb.innerHTML=(rows||[]).map(r=>{
+    const roi=r.roi==null?"—":r.roi.toFixed(2);
+    const cls=r.roi>=8?"g":(r.roi>0?"a":"r");
+    return `<tr><td>${r.combo}</td><td>${fmtMoney(r.sales)}</td><td>${fmtNum(r.orders)}</td>
+      <td>${fmtMoney(r.promo_cost)}</td><td>${fmtMoney(r.promo_sales)}</td>
+      <td>${r.ad_ratio==null?"—":fmtPct(r.ad_ratio)}</td>
+      <td>${r.roi==null?"—":`<span class="pill ${cls}">${roi}</span>`}</td></tr>`;
+  }).join("")||`<tr><td colspan="7" style="text-align:center;color:#999">暂无数据</td></tr>`;
+}
+function renderScenes(rows){
+  const tb=document.querySelector("#tblScenes tbody");
+  tb.innerHTML=(rows||[]).map(r=>{
+    const cls=r.roi>=8?"g":(r.roi>0?"a":"r");
+    return `<tr><td><span class="pill">${r.platform}</span></td><td>${r.scene}</td>
+      <td>${fmtMoney(r.promo_cost)}</td><td>${fmtMoney(r.promo_sales)}</td>
+      <td>${r.roi==null?"—":`<span class="pill ${cls}">${r.roi.toFixed(2)}</span>`}</td></tr>`;
+  }).join("")||`<tr><td colspan="5" style="text-align:center;color:#999">暂无场景数据（上传含场景列的推广报表后出现）</td></tr>`;
+}
+function renderShops(rows){
+  const tb=document.querySelector("#tblShops tbody");
+  tb.innerHTML=(rows||[]).map(r=>`<tr><td><span class="pill">${r.platform}</span></td><td>${r.shop}</td>
+    <td>${fmtMoney(r.gmv)}</td><td>${fmtNum(r.orders)}</td><td>${fmtNum(r.visitors)}</td></tr>`)
+    .join("")||`<tr><td colspan="5" style="text-align:center;color:#999">暂无店铺数据（上传交易概况分天后出现）</td></tr>`;
+}
+function loadInfluencers(){
+  const p=document.getElementById("infPlatform").value;
+  const f=getFilters();
+  const q=new URLSearchParams({platform:p,start:f.start,end:f.end,limit:20}).toString();
+  fetch("/api/influencers?"+q).then(r=>r.json()).then(rows=>{
+    const tb=document.querySelector("#tblInfluencers tbody");
+    tb.innerHTML=(rows||[]).map(r=>`<tr><td style="max-width:160px;white-space:normal">${r.influencer_name}</td>
+      <td><span class="pill">${r.platform}</span></td><td>${fmtMoney(r.sales)}</td>
+      <td>${fmtNum(r.orders)}</td><td>${fmtMoney(r.commission)}</td></tr>`)
+      .join("")||`<tr><td colspan="5" style="text-align:center;color:#999">暂无达人数据（小红书/抖音订单含达人字段后出现）</td></tr>`;
+  });
+}
+function loadCoverage(){
+  fetch("/api/coverage?days=14").then(r=>r.json()).then(d=>{
+    const box=document.getElementById("coverageBox");
+    if(!d.rows||!d.rows.length){box.innerHTML=`<div style="color:#9aa6b2;font-size:12px;padding:8px">暂无数据</div>`;return;}
+    const dates=d.rows[0].days.map(x=>x.date.slice(5));
+    let html=`<table><thead><tr><th>平台/品类</th>${dates.map(x=>`<th style="min-width:26px">${x}</th>`).join("")}</tr></thead><tbody>`;
+    html+=d.rows.map(row=>{
+      const cells=row.days.map(x=>{
+        const bad=x.mark==="缺";
+        return `<td style="text-align:center;font-size:11px;${bad?"color:#e34d59":"color:#21a366"}" title="${x.date}">${bad?"缺":x.mark}</td>`;
+      }).join("");
+      return `<tr><td>${row.platform}/${row.category}</td>${cells}</tr>`;
+    }).join("");
+    box.innerHTML=html+"</tbody></table>";
+  });
+}
+document.getElementById("infPlatform").onchange=loadInfluencers;
 
 function destroy(id){if(charts[id]){charts[id].destroy();delete charts[id];}}
 
@@ -557,6 +683,7 @@ document.getElementById("btnUpload").onclick=()=>{
   const plat=document.getElementById("upPlatform").value.trim();
   const cat=document.getElementById("upCategory").value.trim();
   const type=document.getElementById("upType").value;
+  const shop=document.getElementById("upShop").value.trim();
   if(!plat){showMsg("upMsg",false,"请选择或输入平台（或在文件名中包含平台名）");return;}
   // 品类框为空时按文件名/内容自动识别；有值时强制覆盖所有文件
   if(!cat){
@@ -565,7 +692,7 @@ document.getElementById("btnUpload").onclick=()=>{
   }
   const fd=new FormData();
   for(const f of files) fd.append("files",f);
-  fd.append("platform",plat);fd.append("category",cat);fd.append("data_type",type);
+  fd.append("platform",plat);fd.append("category",cat);fd.append("data_type",type);fd.append("shop",shop);
   showMsg("upMsg",true,`正在上传 ${files.length} 个文件…`);
   fetch("/api/upload_batch",{method:"POST",body:fd}).then(r=>r.json()).then(d=>{
     if(d.error){showMsg("upMsg",false,"失败："+d.error);return;}
@@ -583,8 +710,10 @@ document.getElementById("btnUpload").onclick=()=>{
       rc.innerHTML=okList.map(r=>{
         const miss=r.missing_fields&&r.missing_fields.length?r.missing_fields.join("、"):"无";
         const warn=r.warning?`<div style="color:#e0913a;margin-top:3px">⚠ ${r.warning}</div>`:"";
+        const sheets=(r.sheets||[]).map(s=>`${s.sheet}→${TYPE_MAP[s.data_type]||s.data_type} ${s.rows}行`).join("；");
         return `<div style="border:1px solid var(--line);border-radius:9px;padding:8px 10px;margin-bottom:7px;font-size:12px">
-          <div><b>${r.filename}</b> · ${r.platform}/${r.category} · ${TYPE_MAP[r.data_type]||r.data_type} · ${r.rows} 行</div>
+          <div><b>${r.filename}</b> · ${r.platform}${r.shop?"/"+r.shop:""}/${r.category} · ${TYPE_MAP[r.data_type]||r.data_type} · ${r.rows} 行 · ${r.date_min||"-"}~${r.date_max||"-"}</div>
+          ${sheets?`<div style="color:#6b7785;margin-top:2px">${sheets}</div>`:""}
           <div style="color:#9aa6b2;margin-top:2px">未识别的关键字段：<b style="color:#e34d59">${miss}</b></div>
           ${warn}
         </div>`;
